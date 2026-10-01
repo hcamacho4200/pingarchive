@@ -57,6 +57,7 @@ func main() {
 	defer conn.Close()
 
 	id := os.Getpid() & 0xffff
+
 	replies := make(chan pingReply, 16)
 	receiveErrors := make(chan error, 1)
 	go receivePings(conn, id, replies, receiveErrors)
@@ -77,6 +78,26 @@ func main() {
 		time.Sleep(time.Second)
 	}
 }
+
+// startPinger
+// - starts the ping loop
+// - sends a ping
+func startPinger(conn *icmp.PacketConn, ip *net.IPAddr, id int) int {
+	for seq := 1; ; seq++ {
+		sentAt := time.Now()
+		if err := sendPing(conn, ip, id, seq); err != nil {
+			capturePing(pingData{
+				target:   ip.IP,
+				sequence: seq,
+				sentAt:   sentAt,
+				err:      err,
+			})
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+
 
 func resolveIPv4(host string) (*net.IPAddr, error) {
 	ips, err := net.LookupIP(host)
