@@ -75,9 +75,11 @@ func main() {
 	go processPings(ctx, packetTracker, pingStats, replies, receiveErrors, receiveTimeout)
 
 	hosts := []string{
+		"192.168.1.1",
+		"75.75.75.75",
 		"8.8.8.8",
+		"8.8.4.4",
 		"1.1.1.1",
-		"192.1.1.1",
 	}
 
 	for index, hostAddress := range hosts {
@@ -299,7 +301,6 @@ func reaperScan(
 }
 
 func performReaping(packetTracker *SafeMap[pingTrackerKey, PingData], pingStats *PingStats, receiveTimeout chan<- PingData) {
-	fmt.Println("reaping")
 	var expired []pingTrackerKey
 	packetTracker.Range(func(key pingTrackerKey, value PingData) bool {
 		if time.Since(value.sentAt) > reaperPeriod {

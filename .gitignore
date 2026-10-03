@@ -2,3 +2,5 @@
 pingarchive-ping-engine/main.go
 pingarchive-ping-engine/coverage.out
 .vscode/settings.json
+pingarchive-ping-engine/__debug_bin*
+
