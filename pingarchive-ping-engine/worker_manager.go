@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // Worker represents a running goroutine.
@@ -13,23 +14,34 @@ type Worker struct {
 	name   string
 	Done   chan struct{}
 	Cancel context.CancelFunc
+
+	mu        sync.RWMutex
+	lastRunAt time.Time
 }
 
 // Running reports whether the worker's goroutine is still running.
-
 func (w *Worker) Running() bool {
-
 	select {
 	case <-w.Done:
 		return false
 	default:
 		return true
 	}
+}
 
+func (w *Worker) LastRunAt() time.Time {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.lastRunAt
+}
+
+func (w *Worker) SetLastRunAt(t time.Time) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.lastRunAt = t
 }
 
 // WorkerManager keeps track of running workers.
-
 type WorkerManager struct {
 	mu      sync.RWMutex
 	workers map[int]*Worker
@@ -47,7 +59,7 @@ func NewWorkerManager() *WorkerManager {
 // Start creates and starts a new worker.
 func (m *WorkerManager) Start(
 	id int,
-	fn func(ctx context.Context),
+	fn func(ctx context.Context, worker *Worker),
 ) error {
 	m.mu.Lock()
 	// Don't allow duplicate workers with the same ID.
@@ -66,7 +78,7 @@ func (m *WorkerManager) Start(
 	m.mu.Unlock()
 	go func() {
 		defer close(worker.Done)
-		fn(ctx)
+		fn(ctx, worker)
 	}()
 	return nil
 }
@@ -185,3 +197,4 @@ func (m *WorkerManager) Range(fn func(int, *Worker) bool) {
 		}
 	}
 }
+

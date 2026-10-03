@@ -85,8 +85,8 @@ func main() {
 
 		fmt.Printf("PingArchive-engine monitoring %s (%s)\n", hostAddress, ip)
 		workerID := workerBaseID + index
-		if errStart := manager.Start(workerID, func(ctx context.Context) {
-			if errStartPinger := startPinger(conn, ip, workerID, packetTracker, pingStats, receiveErrors, ctx); errStartPinger != nil {
+		if errStart := manager.Start(workerID, func(ctx context.Context, worker *Worker) {
+			if errStartPinger := startPinger(ctx, worker, conn, ip, workerID, packetTracker, pingStats, receiveErrors); errStartPinger != nil {
 				fmt.Println(errStartPinger)
 			}
 		}); errStart != nil {
@@ -116,7 +116,7 @@ func main() {
 // startPinger
 // - starts the ping loop
 // - sends a ping
-func startPinger(conn *icmp.PacketConn, ip *net.IPAddr, id int, packetTracker *SafeMap[pingTrackerKey, PingData], pingStats *PingStats, receiveErrors chan<- PingData, ctx context.Context) error {
+func startPinger(ctx context.Context, worker *Worker, conn *icmp.PacketConn, ip *net.IPAddr, id int, packetTracker *SafeMap[pingTrackerKey, PingData], pingStats *PingStats, receiveErrors chan<- PingData) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	sequenceNumber := 1
@@ -127,6 +127,7 @@ func startPinger(conn *icmp.PacketConn, ip *net.IPAddr, id int, packetTracker *S
 			return fmt.Errorf("stopped worker id: %d", id)
 		case <-ticker.C:
 			sentAt := time.Now()
+			worker.SetLastRunAt(sentAt)
 			newPingData := PingData{
 				id:       id,
 				target:   ip.IP,

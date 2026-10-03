@@ -13,7 +13,6 @@ type ControlServer struct {
 	pingStats     *PingStats
 	listenAddress string
 	cancelMain    context.CancelFunc
-
 }
 
 func NewControlServer(cancelMain context.CancelFunc, manager *WorkerManager, pingStats *PingStats, listenAddress string) *ControlServer {
@@ -58,15 +57,17 @@ func (s *ControlServer) health(w http.ResponseWriter, r *http.Request) {
 
 func (s *ControlServer) workers(w http.ResponseWriter, r *http.Request) {
 	type data struct {
-		ID   int    `json:"id"`
-		Name string `json:"name"`
+		ID        int       `json:"id"`
+		Name      string    `json:"name"`
+		LastRunAt time.Time `json:"last_run_at"`
 	}
 
 	results := make([]data, 0, len(s.manager.List()))
 	s.manager.Range(func(_ int, worker *Worker) bool {
 		results = append(results, data{
-			ID:   worker.ID,
-			Name: worker.name,
+			ID:        worker.ID,
+			Name:      worker.name,
+			LastRunAt: worker.LastRunAt(),
 		})
 		return true
 	})
