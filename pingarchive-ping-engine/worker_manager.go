@@ -9,7 +9,8 @@ import (
 // Worker represents a running goroutine.
 
 type Worker struct {
-	ID     string
+	ID     int
+	name   string
 	Done   chan struct{}
 	Cancel context.CancelFunc
 }
@@ -31,39 +32,28 @@ func (w *Worker) Running() bool {
 
 type WorkerManager struct {
 	mu      sync.RWMutex
-	workers map[string]*Worker
+	workers map[int]*Worker
 }
 
 // NewWorkerManager creates an initialized WorkerManager.
 
 func NewWorkerManager() *WorkerManager {
-
 	return &WorkerManager{
-		workers: make(map[string]*Worker),
+		workers: make(map[int]*Worker),
 	}
 
 }
 
 // Start creates and starts a new worker.
-
-//
-
-// The supplied function receives a context that will be cancelled
-
-// when Stop() is called.
-
 func (m *WorkerManager) Start(
-
-	id string,
+	id int,
 	fn func(ctx context.Context),
-
 ) error {
-
 	m.mu.Lock()
 	// Don't allow duplicate workers with the same ID.
 	if worker, exists := m.workers[id]; exists && worker.Running() {
 		m.mu.Unlock()
-		return fmt.Errorf("worker %q is already running", id)
+		return fmt.Errorf("worker %d is already running", id)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	worker := &Worker{
@@ -71,6 +61,7 @@ func (m *WorkerManager) Start(
 		Done:   make(chan struct{}),
 		Cancel: cancel,
 	}
+	worker.name = fmt.Sprintf("worker-%d", id)
 	m.workers[id] = worker
 	m.mu.Unlock()
 	go func() {
@@ -78,13 +69,11 @@ func (m *WorkerManager) Start(
 		fn(ctx)
 	}()
 	return nil
-
 }
 
 // Get returns a worker by ID.
 
-func (m *WorkerManager) Get(id string) (*Worker, bool) {
-
+func (m *WorkerManager) Get(id int) (*Worker, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	worker, exists := m.workers[id]
@@ -93,9 +82,7 @@ func (m *WorkerManager) Get(id string) (*Worker, bool) {
 }
 
 // IsRunning reports whether a worker exists and is currently running.
-
-func (m *WorkerManager) IsRunning(id string) bool {
-
+func (m *WorkerManager) IsRunning(id int) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	worker, exists := m.workers[id]
@@ -103,11 +90,10 @@ func (m *WorkerManager) IsRunning(id string) bool {
 		return false
 	}
 	return worker.Running()
-
 }
 
-func (m *WorkerManager) Stop(id string) error {
-
+// Stops a worker.
+func (m *WorkerManager) Stop(id int) error {
 	m.mu.RLock()
 	worker, exists := m.workers[id]
 	m.mu.RUnlock()
@@ -119,9 +105,20 @@ func (m *WorkerManager) Stop(id string) error {
 
 }
 
-// Wait waits for a worker to finish.
+// Stop all workers
+func (m *WorkerManager) StopAll() error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, worker := range m.workers {
+		if worker.Running() {
+			worker.Cancel()
+		}
+	}
+	return nil
+}
 
-func (m *WorkerManager) Wait(id string) error {
+// Wait waits for a worker to finish.
+func (m *WorkerManager) Wait(id int) error {
 
 	m.mu.RLock()
 	worker, exists := m.workers[id]
@@ -131,11 +128,9 @@ func (m *WorkerManager) Wait(id string) error {
 	}
 	<-worker.Done
 	return nil
-
 }
 
-func (m *WorkerManager) Remove(id string) error {
-
+func (m *WorkerManager) Remove(id int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	worker, exists := m.workers[id]
@@ -151,19 +146,14 @@ func (m *WorkerManager) Remove(id string) error {
 }
 
 // Count returns the number of workers currently registered.
-
 func (m *WorkerManager) Count() int {
-
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.workers)
-
 }
 
 // RunningCount returns the number of workers currently running.
-
 func (m *WorkerManager) RunningCount() int {
-
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	count := 0
@@ -173,5 +163,25 @@ func (m *WorkerManager) RunningCount() int {
 		}
 	}
 	return count
+}
 
+func (m *WorkerManager) List() []Worker {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	results := make([]Worker, 0, len(m.workers))
+
+	for _, worker := range m.workers {
+		results = append(results, *worker)
+	}
+	return results
+}
+
+func (m *WorkerManager) Range(fn func(int, *Worker) bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for id, worker := range m.workers {
+		if !fn(id, worker) {
+			return
+		}
+	}
 }

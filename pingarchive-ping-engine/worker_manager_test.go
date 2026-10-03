@@ -12,7 +12,7 @@ func TestWorkerManager(t *testing.T) {
 	workersMax := 50
 
 	for i := 0; i < workersMax; i++ {
-		id := fmt.Sprintf("pinger-%d", i)
+		id := i
 		err := manager.Start(id, func(ctx context.Context) {
 			ticker := time.NewTicker(time.Second)
 			defer ticker.Stop()
@@ -43,22 +43,22 @@ func TestWorkerManager(t *testing.T) {
 
 	fmt.Println(
 		"Running:",
-		manager.IsRunning("pinger-1"),
-		manager.IsRunning("pinger-2"),
+		manager.IsRunning(1),
+		manager.IsRunning(2),
 	)
 	// Tell the goroutine to stop.
 	fmt.Println("Requesting stop...")
-	if err := manager.Stop("pinger-1"); err != nil {
+	if err := manager.Stop(1); err != nil {
 		panic(err)
 	}
 
 	// Wait for the goroutine to actually exit.
-	if err := manager.Wait("pinger-1"); err != nil {
+	if err := manager.Wait(1); err != nil {
 		panic(err)
 	}
 	fmt.Println(
 		"Running:",
-		manager.IsRunning("pinger-1"),
+		manager.IsRunning(1),
 	)
 
 	// Check that the goroutine actually stopped.
@@ -71,7 +71,7 @@ func TestWorkerManager(t *testing.T) {
 	}
 
 	// Remove the completed worker.
-	if err := manager.Remove("pinger-1"); err != nil {
+	if err := manager.Remove(1); err != nil {
 		panic(err)
 	}
 	fmt.Println(

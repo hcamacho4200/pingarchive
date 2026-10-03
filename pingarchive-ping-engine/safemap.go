@@ -26,3 +26,34 @@ func (s *SafeMap[K, V]) Set(key K, val V) {
 	defer s.mu.Unlock()
 	s.m[key] = val
 }
+
+func (s *SafeMap[K, V]) Remove(key K) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.m, key)
+}
+
+// Keys returns all keys currently in the map.
+func (s *SafeMap[K, V]) Keys() []K {
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	keys := make([]K, 0, len(s.m))
+	for key := range s.m {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// Range calls fn for each key/value pair in the map.
+// Returning false from fn stops iteration.
+func (s *SafeMap[K, V]) Range(fn func(K, V) bool) {
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for key, value := range s.m {
+		if !fn(key, value) {
+			return
+		}
+	}
+}
