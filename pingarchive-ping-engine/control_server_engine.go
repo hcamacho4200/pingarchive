@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -11,13 +12,16 @@ type ControlServer struct {
 	manager       *WorkerManager
 	pingStats     *PingStats
 	listenAddress string
+	cancelMain    context.CancelFunc
+
 }
 
-func NewControlServer(manager *WorkerManager, pingStats *PingStats, listenAddress string) *ControlServer {
+func NewControlServer(cancelMain context.CancelFunc, manager *WorkerManager, pingStats *PingStats, listenAddress string) *ControlServer {
 	return &ControlServer{
 		manager:       manager,
 		listenAddress: listenAddress,
 		pingStats:     pingStats,
+		cancelMain:    cancelMain,
 	}
 }
 
@@ -32,6 +36,8 @@ func (s *ControlServer) Start() error {
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("GET /ping_stats", s.handleStats)
 	mux.HandleFunc("GET /workers", s.workers)
+	mux.HandleFunc("GET /cancel_main", s.handleCancelMain)
+
 	// mux.HandleFunc("POST /workers/{id}/stop", s.stopWorker)
 
 	server := &http.Server{
@@ -73,6 +79,28 @@ func (s *ControlServer) workers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *ControlServer) handleStats(w http.ResponseWriter, r *http.Request) {
+	type data struct {
+		SuccessCount int `json:"success_count"`
+		FailureCount int `json:"failure_count"`
+		SkippedCount int `json:"skipped_count"`
+		TimeoutCount int `json:"timeout_count"`
+	}
+
+	results := data{
+		SuccessCount: s.pingStats.SuccessCount,
+		FailureCount: s.pingStats.FailureCount,
+		SkippedCount: s.pingStats.SkippedCount,
+		TimeoutCount: s.pingStats.TimeoutCount,
+	}
+	writeJSON(w, http.StatusOK, APIResponse{
+		Success: true,
+		Message: "Success",
+		Data:    results,
+	})
+}
+
+func (s *ControlServer) handleCancelMain(w http.ResponseWriter, r *http.Request) {
+	s.cancelMain()
 	type data struct {
 		SuccessCount int `json:"success_count"`
 		FailureCount int `json:"failure_count"`

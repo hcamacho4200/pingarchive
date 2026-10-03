@@ -98,7 +98,7 @@ func (m *WorkerManager) Stop(id int) error {
 	worker, exists := m.workers[id]
 	m.mu.RUnlock()
 	if !exists {
-		return fmt.Errorf("worker %q does not exist", id)
+		return fmt.Errorf("worker %d does not exist", id)
 	}
 	worker.Cancel()
 	return nil
@@ -124,7 +124,7 @@ func (m *WorkerManager) Wait(id int) error {
 	worker, exists := m.workers[id]
 	m.mu.RUnlock()
 	if !exists {
-		return fmt.Errorf("worker %q does not exist", id)
+		return fmt.Errorf("worker %d does not exist", id)
 	}
 	<-worker.Done
 	return nil
@@ -135,10 +135,10 @@ func (m *WorkerManager) Remove(id int) error {
 	defer m.mu.Unlock()
 	worker, exists := m.workers[id]
 	if !exists {
-		return fmt.Errorf("worker %q does not exist", id)
+		return fmt.Errorf("worker %d does not exist", id)
 	}
 	if worker.Running() {
-		return fmt.Errorf("worker %q is still running", id)
+		return fmt.Errorf("worker %d is still running", id)
 	}
 	delete(m.workers, id)
 	return nil

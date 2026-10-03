@@ -52,21 +52,21 @@ func main() {
 		}
 	}()
 
+	mainctx, cancelMain := context.WithCancel(context.Background())
 	manager := NewWorkerManager()
 	pingStats := NewPingStats()
-	controlServer := NewControlServer(manager, pingStats, "0.0.0.0:8100")
+	controlServer := NewControlServer(cancelMain, manager, pingStats, "0.0.0.0:8100")
 	go func() {
 		if err := controlServer.Start(); err != nil {
 			log.Fatal(err)
 		}
-	}() 
+	}()
 
 	// replies := make(chan pingReply, 16)
 	receiveErrors := make(chan PingData, channelSize)
 
 	workerBaseID := os.Getpid() & 0xffff
 	packetTracker := NewSafeMap[pingTrackerKey, PingData]()
-
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go receivePings(ctx, conn, packetTracker, pingStats)
@@ -94,22 +94,23 @@ func main() {
 		}
 	}
 
-	time.Sleep(5 * time.Second)
-	if err := manager.Stop(workerBaseID + 1); err != nil {
-		fmt.Println(err)
+	for {
+		select {
+		case <-mainctx.Done():
+			fmt.Println("Shutting down")
+			manager.StopAll()
+			cancel()
+			time.Sleep(2 * time.Second)
+			performReaping(packetTracker, pingStats)
+			packetTracker.Range(func(key pingTrackerKey, data PingData) bool {
+				fmt.Printf("%+v: %+v\n", key, data)
+				return true
+			})
+			fmt.Printf("%+v\n", pingStats)
+			return
+		default:
+		}
 	}
-	time.Sleep(5 * time.Second)
-	manager.StopAll()
-	fmt.Println("Shutting down")
-	time.Sleep(2 * time.Second)
-	cancel()
-	performReaping(packetTracker, pingStats)
-	packetTracker.Range(func(key pingTrackerKey, data PingData) bool {
-		fmt.Printf("%+v: %+v\n", key, data)
-		return true
-
-	})
-	fmt.Printf("%+v\n", pingStats)
 }
 
 // startPinger
