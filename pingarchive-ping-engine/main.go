@@ -62,19 +62,22 @@ func main() {
 		}
 	}()
 
-	// replies := make(chan pingReply, 16)
+	replies := make(chan PingData, channelSize)
 	receiveErrors := make(chan PingData, channelSize)
+	receiveTimeout := make(chan PingData, channelSize)
 
 	workerBaseID := os.Getpid() & 0xffff
 	packetTracker := NewSafeMap[pingTrackerKey, PingData]()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go receivePings(ctx, conn, packetTracker, pingStats)
-	go reaperScan(ctx, packetTracker, pingStats)
+	go receivePings(ctx, conn, packetTracker, pingStats, replies, receiveErrors)
+	go reaperScan(ctx, packetTracker, pingStats, receiveTimeout)
+	go processPings(ctx, packetTracker, pingStats, replies, receiveErrors, receiveTimeout)
 
 	hosts := []string{
 		"8.8.8.8",
 		"1.1.1.1",
+		"192.1.1.1",
 	}
 
 	for index, hostAddress := range hosts {
@@ -101,14 +104,13 @@ func main() {
 			manager.StopAll()
 			cancel()
 			time.Sleep(2 * time.Second)
-			performReaping(packetTracker, pingStats)
+			performReaping(packetTracker, pingStats, receiveErrors)
 			packetTracker.Range(func(key pingTrackerKey, data PingData) bool {
 				fmt.Printf("%+v: %+v\n", key, data)
 				return true
 			})
 			fmt.Printf("%+v\n", pingStats)
 			return
-		default:
 		}
 	}
 }
@@ -136,7 +138,6 @@ func startPinger(ctx context.Context, worker *Worker, conn *icmp.PacketConn, ip 
 				err:      nil,
 			}
 
-			fmt.Println(id, ": ping ", sentAt.Format(time.RFC3339Nano))
 			packetTracker.Set(pingTrackerKey{workerId: id, sequence: sequenceNumber}, newPingData)
 			if err := sendPing(conn, ip, id, sequenceNumber); err != nil {
 				pingStats.IncrementFailure()
@@ -201,6 +202,8 @@ func receivePings(
 	conn *icmp.PacketConn,
 	packetTracker *SafeMap[pingTrackerKey, PingData],
 	pingStats *PingStats,
+	replies chan<- PingData,
+	receiveErrors chan<- PingData,
 ) {
 	buffer := make([]byte, 1500)
 
@@ -241,77 +244,19 @@ func receivePings(
 
 			data, ok := packetTracker.Get(pkey)
 			if !ok {
-				fmt.Printf("skipping: %+v\n", data)
 				pingStats.IncrementSkipped()
 			} else {
 				data.UpdateReceivedAt(receivedAt)
 				data.target = peer.(*net.UDPAddr).IP
 				packetTracker.Set(pkey, data)
 				pingStats.IncrementSuccess()
-				fmt.Printf("reply: %+v\n", data)
+				replies <- data
+				packetTracker.Remove(pkey)
 			}
-
-			// echo, ok := reply.Body.(*icmp.Echo)
-			// if !ok || echo.ID != id {
-			// 	continue
-			// }
-
-			// 		replies <- pingReply{
-			// 			sequence:   echo.Seq,
-			// 			receivedAt: receivedAt,
-			// 			peer:       peer,
-			// 		}
 		}
 	}
 }
 
-// func awaitReply(
-// 	target net.IP,
-// 	sequence int,
-// 	sentAt time.Time,
-// 	replies <-chan pingReply,
-// 	receiveErrors <-chan error,
-// ) pingData {
-// 	timer := time.NewTimer(timeout)
-// 	defer timer.Stop()
-
-// 	for {
-// 		select {
-// 		case reply := <-replies:
-// 			// A reply can arrive after its caller has timed out. Ignore that stale
-// 			// reply and keep waiting for the sequence currently being measured.
-// 			if reply.sequence != sequence {
-// 				continue
-// 			}
-
-// 			return pingData{
-// 				target:     target,
-// 				source:     reply.peer,
-// 				sequence:   sequence,
-// 				sentAt:     sentAt,
-// 				receivedAt: reply.receivedAt,
-// 				rtt:        reply.receivedAt.Sub(sentAt),
-// 			}
-// 		case err := <-receiveErrors:
-// 			return pingData{
-// 				target:   target,
-// 				sequence: sequence,
-// 				sentAt:   sentAt,
-// 				err:      fmt.Errorf("receiver stopped: %w", err),
-// 			}
-// 		case <-timer.C:
-// 			return pingData{
-// 				target:   target,
-// 				sequence: sequence,
-// 				sentAt:   sentAt,
-// 				err:      fmt.Errorf("timeout after %v", timeout),
-// 			}
-// 		}
-// 	}
-// }
-
-// capturePing is the single output path for ping measurements. Replace or
-// extend this function when the database writer is added.
 func capturePing(data PingData) {
 	if data.err != nil {
 		fmt.Printf("%s seq=%d sent=%s timeout/error: %v\n",
@@ -337,6 +282,7 @@ func reaperScan(
 	ctx context.Context,
 	packetTracker *SafeMap[pingTrackerKey, PingData],
 	pingStats *PingStats,
+	receiveErrors chan<- PingData,
 
 ) {
 	ticker := time.NewTicker(reaperPeriod)
@@ -347,12 +293,12 @@ func reaperScan(
 			fmt.Println("Reaper stopping")
 			return
 		case <-ticker.C:
-			performReaping(packetTracker, pingStats)
+			performReaping(packetTracker, pingStats, receiveErrors)
 		}
 	}
 }
 
-func performReaping(packetTracker *SafeMap[pingTrackerKey, PingData], pingStats *PingStats) {
+func performReaping(packetTracker *SafeMap[pingTrackerKey, PingData], pingStats *PingStats, receiveTimeout chan<- PingData) {
 	fmt.Println("reaping")
 	var expired []pingTrackerKey
 	packetTracker.Range(func(key pingTrackerKey, value PingData) bool {
@@ -362,7 +308,27 @@ func performReaping(packetTracker *SafeMap[pingTrackerKey, PingData], pingStats 
 		return true
 	})
 	for _, key := range expired {
-		packetTracker.Remove(key)
-		pingStats.IncrementTimeout()
+		data, ok := packetTracker.Get(key)
+		if ok {
+			packetTracker.Remove(key)
+			pingStats.IncrementTimeout()
+			receiveTimeout <- data
+		}
+	}
+}
+
+func processPings(ctx context.Context, packetTracker *SafeMap[pingTrackerKey, PingData], pingStats *PingStats, replies <-chan PingData, receiveErrors <-chan PingData, receiveTimeout <-chan PingData) {
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("Process Pings stopping")
+			return
+		case data := <-replies:
+			fmt.Printf("success: %+v\n", data)
+		case data := <-receiveErrors:
+			fmt.Printf("error: %+v\n", data)
+		case data := <-receiveTimeout:
+			fmt.Printf("timeout: %+v\n", data)
+		}
 	}
 }

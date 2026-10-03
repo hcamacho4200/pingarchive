@@ -38,3 +38,12 @@ func (p *PingStats) IncrementTimeout() {
 	defer p.mu.Unlock()
 	p.TimeoutCount++
 }
+
+func (p *PingStats) Reset() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.SuccessCount = 0
+	p.FailureCount = 0
+	p.SkippedCount = 0
+	p.TimeoutCount = 0
+}

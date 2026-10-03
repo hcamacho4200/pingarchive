@@ -16,10 +16,7 @@ type PingData struct {
 	err        error
 }
 
-func (p *PingData) UpdateReceivedAt(recv time.Time) error {
+func (p *PingData) UpdateReceivedAt(recv time.Time) {
 	p.receivedAt = recv
 	p.rtt = p.receivedAt.Sub(p.sentAt)
-	return nil
 }
-
-

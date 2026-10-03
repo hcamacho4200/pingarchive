@@ -13,7 +13,7 @@ func TestWorkerManager(t *testing.T) {
 
 	for i := 0; i < workersMax; i++ {
 		id := i
-		err := manager.Start(id, func(ctx context.Context) {
+		err := manager.Start(id, func(ctx context.Context, worker *Worker) {
 			ticker := time.NewTicker(time.Second)
 			defer ticker.Stop()
 			for {
