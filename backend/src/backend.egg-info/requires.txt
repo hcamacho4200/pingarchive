@@ -1,0 +1,11 @@
+alembic==1.18.4
+cryptography==49.0.0
+fastapi==0.138.0
+httpx==0.28.1
+pip==26.1.2
+pydantic==2.13.4
+pytest==9.0.2
+python-dotenv==1.0.0
+sqlalchemy==2.0.51
+typer==0.21.1
+uvicorn==0.49.0

@@ -3,4 +3,12 @@ pingarchive-ping-engine/main.go
 pingarchive-ping-engine/coverage.out
 .vscode/settings.json
 pingarchive-ping-engine/__debug_bin*
-
+backend/tests/**/__pycache__/*
+pingarchive-ping-engine/.env
+backend/src/**/__pycache__/*
+backend/schema/**/__pycache__/*
+backend/logs/pingarchive.log
+backend/logs/ping_archive_api.log
+.gitignore
+backend/data/pingarchive.db
+backend/.env
