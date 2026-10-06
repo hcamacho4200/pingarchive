@@ -1,0 +1,14 @@
+{
+    "include": [
+        "backend/src",
+        "backend/tests"
+    ],
+    "venvPath": "backend/.",
+    "venv": ".venv",
+    "typeCheckingMode": "standard",
+    "exclude": [
+        "**/__pycache__",
+        ".venv",
+        ".git"
+    ]
+}

@@ -9,7 +9,7 @@ type PingData struct {
 	id         int
 	target     net.IP
 	source     net.Addr
-	sequence   int
+	sequence   uint16
 	sentAt     time.Time
 	receivedAt time.Time
 	rtt        time.Duration

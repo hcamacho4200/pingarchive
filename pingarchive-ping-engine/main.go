@@ -10,6 +10,8 @@ import (
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
+
+	"github.com/joho/godotenv"
 )
 
 const (
@@ -35,11 +37,24 @@ const (
 
 type pingTrackerKey struct {
 	workerId int
-	sequence int
+	sequence uint16
 }
 
 func main() {
 	fmt.Println("Startup")
+
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
+	settings := NewSettings()
+
+	backendClient := NewBackendClient("http://" + settings.apiBindHost + ":" + settings.apiBindPort)
+	destinations, err := backendClient.GetPingDestinations()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	conn, err := icmp.ListenPacket("udp4", "0.0.0.0")
 	if err != nil {
@@ -55,7 +70,7 @@ func main() {
 	mainctx, cancelMain := context.WithCancel(context.Background())
 	manager := NewWorkerManager()
 	pingStats := NewPingStats()
-	controlServer := NewControlServer(cancelMain, manager, pingStats, "0.0.0.0:8100")
+	controlServer := NewControlServer(cancelMain, manager, pingStats, settings.pingControlServerListenAddress)
 	go func() {
 		if err := controlServer.Start(); err != nil {
 			log.Fatal(err)
@@ -74,28 +89,36 @@ func main() {
 	go reaperScan(ctx, packetTracker, pingStats, receiveTimeout)
 	go processPings(ctx, packetTracker, pingStats, replies, receiveErrors, receiveTimeout)
 
-	hosts := []string{
-		"192.168.1.1",
-		"75.75.75.75",
-		"8.8.8.8",
-		"8.8.4.4",
-		"1.1.1.1",
-	}
-
-	for index, hostAddress := range hosts {
-		ip, err := resolveIPv4(hostAddress)
-		if err != nil {
-			log.Fatalf("Unable to resolve %s: %v", hostAddress, err)
+	for index, pingDestination := range destinations {
+		if pingDestination.Enabled == false {
+			fmt.Printf("Skipping disabled destination %s\n", pingDestination.Name)
+			continue
 		}
 
-		fmt.Printf("PingArchive-engine monitoring %s (%s)\n", hostAddress, ip)
-		workerID := workerBaseID + index
-		if errStart := manager.Start(workerID, func(ctx context.Context, worker *Worker) {
-			if errStartPinger := startPinger(ctx, worker, conn, ip, workerID, packetTracker, pingStats, receiveErrors); errStartPinger != nil {
-				fmt.Println(errStartPinger)
+		switch pingDestination.AddressType {
+		case "IPV4":
+			ip, err := resolveIPv4(pingDestination.IPv4)
+			if err != nil {
+				log.Fatalf("Unable to resolve %s: %v", pingDestination.IPv4, err)
 			}
-		}); errStart != nil {
-			fmt.Println(errStart)
+			startIPV4Pinger(ip, pingDestination, workerBaseID, index, manager, conn, packetTracker, pingStats, receiveErrors)
+		case "IPV6":
+		case "HOST":
+			var ip *net.IPAddr
+			ips, err := net.LookupIP(pingDestination.Host)
+			if err != nil {
+				log.Fatalf("Unable to resolve %s: %v", pingDestination.Host, err)
+			}
+			for _, dnsIP := range ips {
+				fmt.Printf("Resolved %s to %s\n", pingDestination.Host, dnsIP)
+				ip, err = resolveIPv4(dnsIP.String())
+				if err != nil {
+					log.Printf("Unable to resolve %s: %v\n", pingDestination.Host, err)
+					continue
+				}
+				startIPV4Pinger(ip, pingDestination, workerBaseID, index, manager, conn, packetTracker, pingStats, receiveErrors)
+				continue
+			}
 		}
 	}
 
@@ -117,13 +140,25 @@ func main() {
 	}
 }
 
+func startIPV4Pinger(ip *net.IPAddr, pingDestination PingDestination, workerBaseID int, index int, manager *WorkerManager, conn *icmp.PacketConn, packetTracker *SafeMap[pingTrackerKey, PingData], pingStats *PingStats, receiveErrors chan PingData) {
+	fmt.Printf("PingArchive-engine monitoring %s (%s)\n", pingDestination.Name, ip)
+	workerID := workerBaseID + index
+	if errStart := manager.Start(workerID, func(ctx context.Context, worker *Worker) {
+		if errStartPinger := startPinger(ctx, worker, conn, ip, workerID, packetTracker, pingStats, receiveErrors, pingDestination.PingInterval); errStartPinger != nil {
+			fmt.Println(errStartPinger)
+		}
+	}); errStart != nil {
+		fmt.Println(errStart)
+	}
+}
+
 // startPinger
 // - starts the ping loop
 // - sends a ping
-func startPinger(ctx context.Context, worker *Worker, conn *icmp.PacketConn, ip *net.IPAddr, id int, packetTracker *SafeMap[pingTrackerKey, PingData], pingStats *PingStats, receiveErrors chan<- PingData) error {
-	ticker := time.NewTicker(time.Second)
+func startPinger(ctx context.Context, worker *Worker, conn *icmp.PacketConn, ip *net.IPAddr, id int, packetTracker *SafeMap[pingTrackerKey, PingData], pingStats *PingStats, receiveErrors chan<- PingData, interval int) error {
+	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	defer ticker.Stop()
-	sequenceNumber := 1
+	sequenceNumber := uint16(1)
 	for {
 		select {
 		case <-ctx.Done():
@@ -170,7 +205,7 @@ func sendPing(
 	conn *icmp.PacketConn,
 	target *net.IPAddr,
 	id int,
-	seq int,
+	seq uint16,
 ) error {
 
 	message := icmp.Message{
@@ -178,7 +213,7 @@ func sendPing(
 		Code: 0,
 		Body: &icmp.Echo{
 			ID:   id,
-			Seq:  seq,
+			Seq:  int(seq),
 			Data: []byte("PingArchive"),
 		},
 	}
@@ -241,7 +276,7 @@ func receivePings(
 
 			pkey := pingTrackerKey{
 				workerId: echo.ID,
-				sequence: echo.Seq,
+				sequence: uint16(echo.Seq),
 			}
 
 			data, ok := packetTracker.Get(pkey)

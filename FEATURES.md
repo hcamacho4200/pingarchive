@@ -1,4 +1,18 @@
 
+[0.0.2] initial python-backend
+- create FastAPI Python
+- sqlalchemy with migrations to sqlite database
+- create environment configurations for backend
+- create environment configurations for engine
+- add address zones
+- add address type
+- add ping interval
+- add go backend client
+- decode ping destinations
+- add support for enabled ping destination
+- support for host resolution for IPV4 addresses
+- support for IPV4 dotted decimal addresses
+
 [0.0.1] initial testing of ping-engine in golang
 - ping-engine in go
 - worker manager for pinger
