@@ -27,6 +27,7 @@ type LatencyChartProps = {
   rangeHours: number;
   refreshSeconds: number;
   onRefreshSecondsChange: (seconds: number) => void;
+  onReset: () => void;
 };
 
 type StoredSeries = Omit<LatencyChartSeries, "points"> & { points: Map<number, number | null> };
@@ -57,7 +58,7 @@ function applyTheme(chart: IChartApi) {
   });
 }
 
-export function LatencyChart({ series, rangeLabel, rangeHours, refreshSeconds, onRefreshSecondsChange }: LatencyChartProps) {
+export function LatencyChart({ series, rangeLabel, rangeHours, refreshSeconds, onRefreshSecondsChange, onReset }: LatencyChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const lineRefs = useRef(new Map<number, ISeriesApi<"Line">[]>());
@@ -229,6 +230,7 @@ export function LatencyChart({ series, rangeLabel, rangeHours, refreshSeconds, o
             <span><i />{autoFollow ? "Following live data" : "Live follow paused"}</span>
             {!autoFollow && <button type="button" onClick={resumeAutoFollow}>Resume live</button>}
           </div>
+          <button className="chart-reset-button" type="button" onClick={onReset}>Reset chart</button>
         </div>
       </div>
       <div

@@ -38,6 +38,7 @@ type ApiResponse<T> = { data: T };
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8002/api/v1";
 const RANGE_LABELS: Record<TimeRange, string> = { 1: "1H", 24: "24H", 168: "7D", 720: "30D" };
 const SERIES_COLORS = ["#0d9488", "#4f7cff", "#e08b37", "#b45ac4", "#d64f6b", "#22a6c7", "#84a344", "#8b6fd9"];
+const CHART_SETTINGS_KEY = "pingarchive.chart-settings";
 
 function SignalIcon() {
   return <span className="signal-icon" aria-hidden="true"><i /><i /><i /></span>;
@@ -59,9 +60,10 @@ function formatLastSeen(value: string) {
 }
 
 export default function Home() {
-  const [range, setRange] = useState<TimeRange>(24);
+  const [range, setRange] = useState<TimeRange>(1);
   const [chartResetKey, setChartResetKey] = useState(0);
   const [refreshSeconds, setRefreshSeconds] = useState(5);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [overview, setOverview] = useState<OverviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -85,11 +87,34 @@ export default function Home() {
     }
   }, []);
 
-  useEffect(() => { void loadOverview(range); }, [chartResetKey, loadOverview, range]);
   useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(CHART_SETTINGS_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as { range?: number; refreshSeconds?: number };
+        if ([1, 24, 168, 720].includes(parsed.range ?? 0)) setRange(parsed.range as TimeRange);
+        if ([1, 5, 20, 60].includes(parsed.refreshSeconds ?? 0)) setRefreshSeconds(parsed.refreshSeconds as number);
+      }
+    } catch {
+      window.localStorage.removeItem(CHART_SETTINGS_KEY);
+    } finally {
+      setSettingsLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    window.localStorage.setItem(CHART_SETTINGS_KEY, JSON.stringify({ range, refreshSeconds }));
+  }, [range, refreshSeconds, settingsLoaded]);
+
+  useEffect(() => {
+    if (settingsLoaded) void loadOverview(range);
+  }, [chartResetKey, loadOverview, range, settingsLoaded]);
+  useEffect(() => {
+    if (!settingsLoaded) return;
     const timer = window.setInterval(() => void loadOverview(range), refreshSeconds * 1000);
     return () => window.clearInterval(timer);
-  }, [loadOverview, range, refreshSeconds]);
+  }, [loadOverview, range, refreshSeconds, settingsLoaded]);
 
   const chart = useMemo(() => {
     const sourceSeries = overview?.latency_series ?? [];
@@ -103,6 +128,14 @@ export default function Home() {
   function selectRange(hours: TimeRange) {
     setOverview(null);
     setRange(hours);
+    setChartResetKey((value) => value + 1);
+  }
+
+  function resetChart() {
+    window.localStorage.removeItem(CHART_SETTINGS_KEY);
+    setOverview(null);
+    setRange(1);
+    setRefreshSeconds(5);
     setChartResetKey((value) => value + 1);
   }
 
@@ -138,7 +171,7 @@ export default function Home() {
           <article className="panel chart-panel">
             <div className="panel-heading"><div><h2>Latency history</h2><p>Average reply time from QuestDB</p></div><div className="range-control" aria-label="Time range">{(Object.keys(RANGE_LABELS).map(Number) as TimeRange[]).map((hours) => <button key={hours} className={range === hours ? "selected" : ""} onClick={() => selectRange(hours)}>{RANGE_LABELS[hours]}</button>)}</div></div>
             <div className="chart-summary"><strong>{formatNumber(overview?.average_latency_ms ?? null)} ms</strong><span>Average across {chart.series.length} destination{chart.series.length === 1 ? "" : "s"}</span></div>
-            {chart.series.length ? <LatencyChart key={`${range}-${chartResetKey}`} series={chart.series} rangeLabel={RANGE_LABELS[range]} rangeHours={range} refreshSeconds={refreshSeconds} onRefreshSecondsChange={setRefreshSeconds} /> : <div className="chart-empty">{loading ? "Loading latency measurements…" : "No latency measurements in this time range."}</div>}
+            {chart.series.length ? <LatencyChart key={`${range}-${chartResetKey}`} series={chart.series} rangeLabel={RANGE_LABELS[range]} rangeHours={range} refreshSeconds={refreshSeconds} onRefreshSecondsChange={setRefreshSeconds} onReset={resetChart} /> : <div className="chart-empty">{loading || !settingsLoaded ? "Loading latency measurements…" : "No latency measurements in this time range."}</div>}
           </article>
 
           <article className="panel health-panel" id="destinations">

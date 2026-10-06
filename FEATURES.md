@@ -21,6 +21,8 @@
     - when scrolled the system will disable updates
 - added update time 1s, etc.
 - fixed timeout ui, now provides blank space
+- enable chart save after navigation
+- enable button for chart reset
 
 [0.0.1] initial testing of ping-engine in golang
 - ping-engine in go
