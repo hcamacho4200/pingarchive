@@ -66,6 +66,7 @@ def version():
     settings = get_settings()
     print(f"Options Collector Version: {settings.version}")
 
+
 @app.command()
 def execute_api():
     """Run FastAPI only."""

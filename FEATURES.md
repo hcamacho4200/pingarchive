@@ -12,6 +12,8 @@
 - add support for enabled ping destination
 - support for host resolution for IPV4 addresses
 - support for IPV4 dotted decimal addresses
+- added initial support for a frontend
+
 
 [0.0.1] initial testing of ping-engine in golang
 - ping-engine in go
