@@ -27,8 +27,6 @@ SAMPLE_INTERVALS = {1: "5s", 24: "1h", 168: "6h", 720: "1d"}
 def _group_latency_rows(rows: list[dict]) -> list[LatencySeriesSchema]:
     series_by_destination: dict[int, LatencySeriesSchema] = {}
     for row in rows:
-        if row.get("average_latency_ms") is None:
-            continue
         destination_id = int(row["destination_id"])
         if destination_id not in series_by_destination:
             series_by_destination[destination_id] = LatencySeriesSchema(
@@ -37,7 +35,12 @@ def _group_latency_rows(rows: list[dict]) -> list[LatencySeriesSchema]:
                 points=[],
             )
         series_by_destination[destination_id].points.append(
-            LatencyPointSchema(timestamp=row["timestamp"], average_latency_ms=float(row["average_latency_ms"]))
+            LatencyPointSchema(
+                timestamp=row["timestamp"],
+                average_latency_ms=(
+                    float(row["average_latency_ms"]) if row.get("average_latency_ms") is not None else None
+                ),
+            )
         )
     return list(series_by_destination.values())
 
@@ -71,7 +74,6 @@ def latency_history(before: datetime, hours: int = Query(default=1), bucket: str
         FROM ping_measurements
         WHERE sent_time >= '{_questdb_timestamp(start_time)}'
           AND sent_time < '{_questdb_timestamp(end_time)}'
-          AND outcome = 'reply'
         SAMPLE BY {interval} ALIGN TO CALENDAR
     """
 
@@ -109,7 +111,6 @@ def ping_overview(hours: int = Query(default=24)):
         FROM ping_measurements
         WHERE sent_time >= dateadd('h', -{latency_lookback_hours}, now())
           {"AND sent_time < dateadd('m', -5, now())" if hours == 1 else ""}
-          AND outcome = 'reply'
         SAMPLE BY {interval} ALIGN TO CALENDAR
     """
     live_latency_sql = """
@@ -119,7 +120,7 @@ def ping_overview(hours: int = Query(default=24)):
             destination_name,
             avg(rtt_us) / 1000.0 AS average_latency_ms
         FROM ping_measurements
-        WHERE sent_time >= dateadd('m', -5, now()) AND outcome = 'reply'
+        WHERE sent_time >= dateadd('m', -5, now())
         SAMPLE BY 1s ALIGN TO CALENDAR
     """
     health_sql = f"""

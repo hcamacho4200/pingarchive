@@ -5,7 +5,7 @@ import { LatencyChart } from "./latency-chart";
 import { ThemeToggle } from "./theme-toggle";
 
 type TimeRange = 1 | 24 | 168 | 720;
-type LatencyPoint = { timestamp: string; average_latency_ms: number };
+type LatencyPoint = { timestamp: string; average_latency_ms: number | null };
 type LatencySeries = { destination_id: number; name: string; points: LatencyPoint[] };
 type DestinationHealth = {
   destination_id: number;

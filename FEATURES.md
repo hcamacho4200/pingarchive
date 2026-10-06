@@ -20,8 +20,7 @@
 - added support for resume button
     - when scrolled the system will disable updates
 - added update time 1s, etc.
-
-
+- fixed timeout ui, now provides blank space
 
 [0.0.1] initial testing of ping-engine in golang
 - ping-engine in go

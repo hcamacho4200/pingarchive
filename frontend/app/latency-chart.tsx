@@ -8,10 +8,11 @@ import {
   createChart,
   type IChartApi,
   type ISeriesApi,
+  type LineData,
   type UTCTimestamp,
 } from "lightweight-charts";
 
-type LatencyPoint = { timestamp: string; average_latency_ms: number };
+type LatencyPoint = { timestamp: string; average_latency_ms: number | null };
 
 export type LatencyChartSeries = {
   destination_id: number;
@@ -28,8 +29,14 @@ type LatencyChartProps = {
   onRefreshSecondsChange: (seconds: number) => void;
 };
 
-type StoredSeries = Omit<LatencyChartSeries, "points"> & { points: Map<number, number> };
+type StoredSeries = Omit<LatencyChartSeries, "points"> & { points: Map<number, number | null> };
 const LIVE_RIGHT_BUFFER_PX = 64;
+const GAP_THRESHOLDS: Record<number, number> = {
+  1: 12,
+  24: 90 * 60,
+  168: 9 * 60 * 60,
+  720: 36 * 60 * 60,
+};
 
 function chartColors() {
   const light = document.documentElement.dataset.theme === "light";
@@ -53,7 +60,7 @@ function applyTheme(chart: IChartApi) {
 export function LatencyChart({ series, rangeLabel, rangeHours, refreshSeconds, onRefreshSecondsChange }: LatencyChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const lineRefs = useRef(new Map<number, ISeriesApi<"Line">>());
+  const lineRefs = useRef(new Map<number, ISeriesApi<"Line">[]>());
   const dataRef = useRef(new Map<number, StoredSeries>());
   const initializedRef = useRef(false);
   const autoFollowRef = useRef(true);
@@ -88,28 +95,48 @@ export function LatencyChart({ series, rangeLabel, rangeHours, refreshSeconds, o
         stored.points.set(timestamp, point.average_latency_ms);
       }
 
-      let line = lineRefs.current.get(item.destination_id);
-      if (!line) {
-        line = chart.addSeries(LineSeries, {
+      for (const line of lineRefs.current.get(item.destination_id) ?? []) {
+        chart.removeSeries(line);
+      }
+      lineRefs.current.delete(item.destination_id);
+
+      const sortedPoints = [...stored.points.entries()].sort(([left], [right]) => left - right);
+      const segments: LineData<UTCTimestamp>[][] = [];
+      let segment: LineData<UTCTimestamp>[] = [];
+      let previousTimestamp: number | null = null;
+      for (const [time, value] of sortedPoints) {
+        const timestampGap = previousTimestamp !== null && time - previousTimestamp > GAP_THRESHOLDS[rangeHours];
+        if (value === null) {
+          if (segment.length > 0) segments.push(segment);
+          segment = [];
+          previousTimestamp = time;
+          continue;
+        }
+        if (timestampGap) {
+          if (segment.length > 0) segments.push(segment);
+          segment = [];
+        }
+        segment.push({ time: time as UTCTimestamp, value });
+        previousTimestamp = time;
+      }
+      if (segment.length > 0) segments.push(segment);
+
+      const lines = segments.map((points, index) => {
+        const line = chart.addSeries(LineSeries, {
           color: stored.color,
           lineWidth: 2,
           title: "",
           priceLineVisible: false,
-          lastValueVisible: true,
+          lastValueVisible: index === segments.length - 1,
           crosshairMarkerVisible: true,
           crosshairMarkerRadius: 4,
         });
-        lineRefs.current.set(item.destination_id, line);
-      } else {
-        line.applyOptions({ color: stored.color, title: "" });
-      }
-      line.setData(
-        [...stored.points.entries()]
-          .sort(([left], [right]) => left - right)
-          .map(([time, value]) => ({ time: time as UTCTimestamp, value })),
-      );
+        line.setData(points);
+        return line;
+      });
+      lineRefs.current.set(item.destination_id, lines);
     }
-  }, []);
+  }, [rangeHours]);
 
   useEffect(() => {
     const container = containerRef.current;

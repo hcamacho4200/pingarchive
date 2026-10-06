@@ -9,7 +9,7 @@ class LatencyPointSchema(BaseModel):
     """One aggregated latency bucket."""
 
     timestamp: datetime
-    average_latency_ms: float
+    average_latency_ms: float | None
 
 
 class LatencySeriesSchema(BaseModel):
