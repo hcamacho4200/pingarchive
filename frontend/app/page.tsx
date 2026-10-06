@@ -126,7 +126,7 @@ export default function Home() {
           <article className="panel chart-panel">
             <div className="panel-heading"><div><h2>Latency history</h2><p>Average reply time from QuestDB</p></div><div className="range-control" aria-label="Time range">{(Object.keys(RANGE_LABELS).map(Number) as TimeRange[]).map((hours) => <button key={hours} className={range === hours ? "selected" : ""} onClick={() => setRange(hours)}>{RANGE_LABELS[hours]}</button>)}</div></div>
             <div className="chart-summary"><strong>{formatNumber(overview?.average_latency_ms ?? null)} ms</strong><span>Average across {chart.series.length} destination{chart.series.length === 1 ? "" : "s"}</span></div>
-            {chart.series.length ? <><div className="chart-legend" aria-label="Destination legend">{chart.series.map((series) => <span key={series.destination_id}><i style={{ backgroundColor: series.color }} />{series.name}</span>)}</div><LatencyChart series={chart.series} rangeLabel={RANGE_LABELS[range]} /></> : <div className="chart-empty">{loading ? "Loading latency measurements…" : "No latency measurements in this time range."}</div>}
+            {chart.series.length ? <><div className="chart-legend" aria-label="Destination legend">{chart.series.map((series) => <span key={series.destination_id}><i style={{ backgroundColor: series.color }} />{series.name}</span>)}</div><LatencyChart key={range} series={chart.series} rangeLabel={RANGE_LABELS[range]} rangeHours={range} /></> : <div className="chart-empty">{loading ? "Loading latency measurements…" : "No latency measurements in this time range."}</div>}
           </article>
 
           <article className="panel health-panel" id="destinations">

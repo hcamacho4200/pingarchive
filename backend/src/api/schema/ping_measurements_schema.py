@@ -20,6 +20,14 @@ class LatencySeriesSchema(BaseModel):
     points: list[LatencyPointSchema]
 
 
+class LatencyHistorySchema(BaseModel):
+    """A bounded window of latency history grouped by destination."""
+
+    start_time: datetime
+    end_time: datetime
+    latency_series: list[LatencySeriesSchema]
+
+
 class DestinationHealthSchema(BaseModel):
     """Health summary for one configured ping destination."""
 

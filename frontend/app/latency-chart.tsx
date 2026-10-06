@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   ColorType,
   CrosshairMode,
@@ -8,7 +8,6 @@ import {
   createChart,
   type IChartApi,
   type ISeriesApi,
-  type LineData,
   type UTCTimestamp,
 } from "lightweight-charts";
 
@@ -24,7 +23,10 @@ export type LatencyChartSeries = {
 type LatencyChartProps = {
   series: LatencyChartSeries[];
   rangeLabel: string;
+  rangeHours: number;
 };
+
+type StoredSeries = Omit<LatencyChartSeries, "points"> & { points: Map<number, number> };
 
 function chartColors() {
   const light = document.documentElement.dataset.theme === "light";
@@ -45,26 +47,58 @@ function applyTheme(chart: IChartApi) {
   });
 }
 
-function toLineData(points: LatencyPoint[]): LineData<UTCTimestamp>[] {
-  const byTimestamp = new Map<number, number>();
-  for (const point of points) {
-    byTimestamp.set(Math.floor(new Date(point.timestamp).getTime() / 1000), point.average_latency_ms);
-  }
-  return [...byTimestamp.entries()]
-    .sort(([left], [right]) => left - right)
-    .map(([time, value]) => ({ time: time as UTCTimestamp, value }));
-}
-
-export function LatencyChart({ series, rangeLabel }: LatencyChartProps) {
+export function LatencyChart({ series, rangeLabel, rangeHours }: LatencyChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const lineRefs = useRef(new Map<number, ISeriesApi<"Line">>());
+  const dataRef = useRef(new Map<number, StoredSeries>());
   const initializedRef = useRef(false);
+
+  const mergeAndRender = useCallback((incoming: LatencyChartSeries[]) => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    for (const item of incoming) {
+      let stored = dataRef.current.get(item.destination_id);
+      if (!stored) {
+        stored = { destination_id: item.destination_id, name: item.name, color: item.color, points: new Map() };
+        dataRef.current.set(item.destination_id, stored);
+      }
+      stored.name = item.name;
+      stored.color = item.color;
+      for (const point of item.points) {
+        const timestamp = Math.floor(new Date(point.timestamp).getTime() / 1000);
+        stored.points.set(timestamp, point.average_latency_ms);
+      }
+
+      let line = lineRefs.current.get(item.destination_id);
+      if (!line) {
+        line = chart.addSeries(LineSeries, {
+          color: stored.color,
+          lineWidth: 2,
+          title: stored.name,
+          priceLineVisible: false,
+          lastValueVisible: true,
+          crosshairMarkerVisible: true,
+          crosshairMarkerRadius: 4,
+        });
+        lineRefs.current.set(item.destination_id, line);
+      } else {
+        line.applyOptions({ color: stored.color, title: stored.name });
+      }
+      line.setData(
+        [...stored.points.entries()]
+          .sort(([left], [right]) => left - right)
+          .map(([time, value]) => ({ time: time as UTCTimestamp, value })),
+      );
+    }
+  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     const lines = lineRefs.current;
+    const storedData = dataRef.current;
 
     const chart = createChart(container, {
       width: container.clientWidth,
@@ -92,6 +126,7 @@ export function LatencyChart({ series, rangeLabel }: LatencyChartProps) {
       themeObserver.disconnect();
       resizeObserver.disconnect();
       lines.clear();
+      storedData.clear();
       chartRef.current = null;
       chart.remove();
     };
@@ -101,52 +136,32 @@ export function LatencyChart({ series, rangeLabel }: LatencyChartProps) {
     const chart = chartRef.current;
     if (!chart) return;
 
-    const visibleRange = chart.timeScale().getVisibleLogicalRange();
+    const visibleRange = chart.timeScale().getVisibleRange();
     const wasFollowingLatest = !initializedRef.current || chart.timeScale().scrollPosition() <= 3;
-    const activeIds = new Set(series.map((item) => item.destination_id));
-
-    for (const [destinationId, line] of lineRefs.current) {
-      if (!activeIds.has(destinationId)) {
-        chart.removeSeries(line);
-        lineRefs.current.delete(destinationId);
-      }
-    }
-
-    for (const item of series) {
-      let line = lineRefs.current.get(item.destination_id);
-      if (!line) {
-        line = chart.addSeries(LineSeries, {
-          color: item.color,
-          lineWidth: 2,
-          title: item.name,
-          priceLineVisible: false,
-          lastValueVisible: true,
-          crosshairMarkerVisible: true,
-          crosshairMarkerRadius: 4,
-        });
-        lineRefs.current.set(item.destination_id, line);
-      } else {
-        line.applyOptions({ color: item.color, title: item.name });
-      }
-      line.setData(toLineData(item.points));
-    }
+    mergeAndRender(series);
 
     if (!initializedRef.current) {
-      chart.timeScale().fitContent();
+      const latestTimestamp = Math.max(
+        ...series.flatMap((item) => item.points.map((point) => Math.floor(new Date(point.timestamp).getTime() / 1000))),
+      );
+      chart.timeScale().setVisibleRange({
+        from: (latestTimestamp - (rangeHours * 60 * 60)) as UTCTimestamp,
+        to: latestTimestamp as UTCTimestamp,
+      });
       initializedRef.current = true;
     } else if (wasFollowingLatest) {
       chart.timeScale().scrollToRealTime();
     } else if (visibleRange) {
-      chart.timeScale().setVisibleLogicalRange(visibleRange);
+      chart.timeScale().setVisibleRange(visibleRange);
     }
-  }, [series]);
+  }, [mergeAndRender, rangeHours, series]);
 
   return (
     <div
       ref={containerRef}
       className="latency-chart"
       role="img"
-      aria-label={`Interactive latency history for ${series.length} destinations over the last ${rangeLabel}. Drag to pan and use the mouse wheel to zoom.`}
+      aria-label={`Interactive latency history for ${series.length} destinations, initially showing the last ${rangeLabel}. Drag left to load older data and use the mouse wheel to zoom.`}
     />
   );
 }

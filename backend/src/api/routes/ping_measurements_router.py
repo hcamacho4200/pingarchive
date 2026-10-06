@@ -1,6 +1,7 @@
 """QuestDB-backed ping measurement routes."""
 
 import logging
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -8,6 +9,7 @@ from api.request_context import build_meta, request_meta_context
 from api.schema.api_response_schema import ApiResponse
 from api.schema.ping_measurements_schema import (
     DestinationHealthSchema,
+    LatencyHistorySchema,
     LatencyPointSchema,
     LatencySeriesSchema,
     PingEventSchema,
@@ -22,6 +24,73 @@ router = APIRouter(prefix="/ping_measurements", tags=["ping_measurements"])
 SAMPLE_INTERVALS = {1: "5s", 24: "1h", 168: "6h", 720: "1d"}
 
 
+def _group_latency_rows(rows: list[dict]) -> list[LatencySeriesSchema]:
+    series_by_destination: dict[int, LatencySeriesSchema] = {}
+    for row in rows:
+        if row.get("average_latency_ms") is None:
+            continue
+        destination_id = int(row["destination_id"])
+        if destination_id not in series_by_destination:
+            series_by_destination[destination_id] = LatencySeriesSchema(
+                destination_id=destination_id,
+                name=str(row["destination_name"]),
+                points=[],
+            )
+        series_by_destination[destination_id].points.append(
+            LatencyPointSchema(timestamp=row["timestamp"], average_latency_ms=float(row["average_latency_ms"]))
+        )
+    return list(series_by_destination.values())
+
+
+def _questdb_timestamp(value: datetime) -> str:
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+@router.get(
+    "/latency_history",
+    summary="Get a bounded QuestDB latency-history window",
+    response_model=ApiResponse[LatencyHistorySchema],
+)
+def latency_history(before: datetime, hours: int = Query(default=1), bucket: str | None = Query(default=None)):
+    """Return the window ending immediately before ``before`` for lazy chart loading."""
+    if hours not in SAMPLE_INTERVALS:
+        raise HTTPException(status_code=400, detail="hours must be one of 1, 24, 168, or 720")
+
+    end_time = before if before.tzinfo else before.replace(tzinfo=UTC)
+    end_time = end_time.astimezone(UTC)
+    start_time = end_time - timedelta(hours=hours)
+    if bucket is not None and bucket not in {"5s", "1m", "1h", "6h", "1d"}:
+        raise HTTPException(status_code=400, detail="bucket must be one of 5s, 1m, 1h, 6h, or 1d")
+    interval = bucket or SAMPLE_INTERVALS[hours]
+    sql = f"""
+        SELECT
+            sent_time AS timestamp,
+            destination_id,
+            destination_name,
+            avg(rtt_us) / 1000.0 AS average_latency_ms
+        FROM ping_measurements
+        WHERE sent_time >= '{_questdb_timestamp(start_time)}'
+          AND sent_time < '{_questdb_timestamp(end_time)}'
+          AND outcome = 'reply'
+        SAMPLE BY {interval} ALIGN TO CALENDAR
+    """
+
+    client = QuestDBClient(get_settings().questdb_address)
+    with request_meta_context() as meta:
+        try:
+            rows = client.query(sql)
+        except QuestDBError as exc:
+            logger.warning("QuestDB latency-history query unavailable: %s", exc)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        data = LatencyHistorySchema(
+            start_time=start_time,
+            end_time=end_time,
+            latency_series=_group_latency_rows(rows),
+        )
+    return ApiResponse(meta=build_meta(meta), data=data)
+
+
 @router.get("/overview", summary="Get QuestDB data for the overview dashboard", response_model=ApiResponse[PingOverviewSchema])
 def ping_overview(hours: int = Query(default=24)):
     """Return latency history and destination health for a supported time range."""
@@ -29,6 +98,7 @@ def ping_overview(hours: int = Query(default=24)):
         raise HTTPException(status_code=400, detail="hours must be one of 1, 24, 168, or 720")
 
     interval = SAMPLE_INTERVALS[hours]
+    latency_lookback_hours = 24 if hours == 1 else hours
     client = QuestDBClient(get_settings().questdb_address)
     latency_sql = f"""
         SELECT
@@ -37,7 +107,7 @@ def ping_overview(hours: int = Query(default=24)):
             destination_name,
             avg(rtt_us) / 1000.0 AS average_latency_ms
         FROM ping_measurements
-        WHERE sent_time >= dateadd('h', -{hours}, now()) AND outcome = 'reply'
+        WHERE sent_time >= dateadd('h', -{latency_lookback_hours}, now()) AND outcome = 'reply'
         SAMPLE BY {interval} ALIGN TO CALENDAR
     """
     health_sql = f"""
@@ -68,21 +138,7 @@ def ping_overview(hours: int = Query(default=24)):
             logger.warning("QuestDB overview query unavailable: %s", exc)
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-        series_by_destination: dict[int, LatencySeriesSchema] = {}
-        for row in latency_rows:
-            if row.get("average_latency_ms") is None:
-                continue
-            destination_id = int(row["destination_id"])
-            if destination_id not in series_by_destination:
-                series_by_destination[destination_id] = LatencySeriesSchema(
-                    destination_id=destination_id,
-                    name=str(row["destination_name"]),
-                    points=[],
-                )
-            series_by_destination[destination_id].points.append(
-                LatencyPointSchema(timestamp=row["timestamp"], average_latency_ms=float(row["average_latency_ms"]))
-            )
-        latency_series = list(series_by_destination.values())
+        latency_series = _group_latency_rows(latency_rows)
         destinations = []
         for row in health_rows:
             availability = float(row.get("availability_pct") or 0)
@@ -100,10 +156,10 @@ def ping_overview(hours: int = Query(default=24)):
                 )
             )
 
-        all_latency_points = [point for series in latency_series for point in series.points]
-        average_latency = (
-            sum(point.average_latency_ms for point in all_latency_points) / len(all_latency_points) if all_latency_points else None
-        )
+        destination_averages = [
+            destination.average_latency_ms for destination in destinations if destination.average_latency_ms is not None
+        ]
+        average_latency = sum(destination_averages) / len(destination_averages) if destination_averages else None
         availability = (
             sum(destination.availability_pct for destination in destinations) / len(destinations) if destinations else None
         )
