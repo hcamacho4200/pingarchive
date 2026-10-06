@@ -107,8 +107,20 @@ def ping_overview(hours: int = Query(default=24)):
             destination_name,
             avg(rtt_us) / 1000.0 AS average_latency_ms
         FROM ping_measurements
-        WHERE sent_time >= dateadd('h', -{latency_lookback_hours}, now()) AND outcome = 'reply'
+        WHERE sent_time >= dateadd('h', -{latency_lookback_hours}, now())
+          {"AND sent_time < dateadd('m', -5, now())" if hours == 1 else ""}
+          AND outcome = 'reply'
         SAMPLE BY {interval} ALIGN TO CALENDAR
+    """
+    live_latency_sql = """
+        SELECT
+            sent_time AS timestamp,
+            destination_id,
+            destination_name,
+            avg(rtt_us) / 1000.0 AS average_latency_ms
+        FROM ping_measurements
+        WHERE sent_time >= dateadd('m', -5, now()) AND outcome = 'reply'
+        SAMPLE BY 1s ALIGN TO CALENDAR
     """
     health_sql = f"""
         SELECT
@@ -132,6 +144,8 @@ def ping_overview(hours: int = Query(default=24)):
     with request_meta_context() as meta:
         try:
             latency_rows = client.query(latency_sql)
+            if hours == 1:
+                latency_rows.extend(client.query(live_latency_sql))
             health_rows = client.query(health_sql)
             recent_rows = client.query(recent_sql)
         except QuestDBError as exc:

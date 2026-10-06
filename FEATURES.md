@@ -16,6 +16,11 @@
 - add support for ping destination setup
 - add initial GUI implementation (Codex)
 - added support for TradingView
+- fix trading view 1h look back
+- added support for resume button
+    - when scrolled the system will disable updates
+- added update time 1s, etc.
+
 
 
 [0.0.1] initial testing of ping-engine in golang

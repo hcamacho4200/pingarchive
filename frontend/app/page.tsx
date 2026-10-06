@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LatencyChart } from "./latency-chart";
 import { ThemeToggle } from "./theme-toggle";
 
@@ -60,30 +60,36 @@ function formatLastSeen(value: string) {
 
 export default function Home() {
   const [range, setRange] = useState<TimeRange>(24);
+  const [chartResetKey, setChartResetKey] = useState(0);
+  const [refreshSeconds, setRefreshSeconds] = useState(5);
   const [overview, setOverview] = useState<OverviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const loadOverview = useCallback(async (selectedRange: TimeRange) => {
+    const requestId = ++requestIdRef.current;
     setLoading(true);
     setError(null);
     try {
       const response = await fetch(`${API_BASE_URL}/ping_measurements/overview?hours=${selectedRange}`, { cache: "no-store" });
       const payload = await response.json() as ApiResponse<OverviewData> | { detail?: string };
       if (!response.ok) throw new Error("detail" in payload && payload.detail ? payload.detail : `Request failed (${response.status})`);
-      setOverview((payload as ApiResponse<OverviewData>).data);
+      if (requestId === requestIdRef.current) setOverview((payload as ApiResponse<OverviewData>).data);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to load QuestDB measurements");
+      if (requestId === requestIdRef.current) {
+        setError(requestError instanceof Error ? requestError.message : "Unable to load QuestDB measurements");
+      }
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { void loadOverview(range); }, [loadOverview, range]);
+  useEffect(() => { void loadOverview(range); }, [chartResetKey, loadOverview, range]);
   useEffect(() => {
-    const timer = window.setInterval(() => void loadOverview(range), 30_000);
+    const timer = window.setInterval(() => void loadOverview(range), refreshSeconds * 1000);
     return () => window.clearInterval(timer);
-  }, [loadOverview, range]);
+  }, [loadOverview, range, refreshSeconds]);
 
   const chart = useMemo(() => {
     const sourceSeries = overview?.latency_series ?? [];
@@ -93,6 +99,12 @@ export default function Home() {
   const destinations = overview?.destinations ?? [];
   const events = overview?.recent_events ?? [];
   const allHealthy = destinations.length > 0 && destinations.every((destination) => destination.status === "Healthy");
+
+  function selectRange(hours: TimeRange) {
+    setOverview(null);
+    setRange(hours);
+    setChartResetKey((value) => value + 1);
+  }
 
   return (
     <main className="app-shell">
@@ -104,7 +116,7 @@ export default function Home() {
           <a className="nav-item" href="#events"><span className="nav-glyph">≋</span>Ping events</a>
           <a className="nav-item" href="/settings"><span className="nav-glyph">⚙</span>Settings</a>
         </nav>
-        <div className="sidebar-footer"><div className="engine-state"><span className={`status-dot ${error ? "status-error" : ""}`} /><div><strong>{error ? "Data unavailable" : "QuestDB connected"}</strong><span>{loading ? "Refreshing…" : "Updates every 30s"}</span></div></div><div className="version">PING ENGINE · V0.1</div></div>
+        <div className="sidebar-footer"><div className="engine-state"><span className={`status-dot ${error ? "status-error" : ""}`} /><div><strong>{error ? "Data unavailable" : "QuestDB connected"}</strong><span>{loading ? "Refreshing…" : `Updates every ${refreshSeconds}s`}</span></div></div><div className="version">PING ENGINE · V0.1</div></div>
       </aside>
 
       <section className="workspace" id="overview">
@@ -124,9 +136,9 @@ export default function Home() {
 
         <section className="dashboard-grid">
           <article className="panel chart-panel">
-            <div className="panel-heading"><div><h2>Latency history</h2><p>Average reply time from QuestDB</p></div><div className="range-control" aria-label="Time range">{(Object.keys(RANGE_LABELS).map(Number) as TimeRange[]).map((hours) => <button key={hours} className={range === hours ? "selected" : ""} onClick={() => setRange(hours)}>{RANGE_LABELS[hours]}</button>)}</div></div>
+            <div className="panel-heading"><div><h2>Latency history</h2><p>Average reply time from QuestDB</p></div><div className="range-control" aria-label="Time range">{(Object.keys(RANGE_LABELS).map(Number) as TimeRange[]).map((hours) => <button key={hours} className={range === hours ? "selected" : ""} onClick={() => selectRange(hours)}>{RANGE_LABELS[hours]}</button>)}</div></div>
             <div className="chart-summary"><strong>{formatNumber(overview?.average_latency_ms ?? null)} ms</strong><span>Average across {chart.series.length} destination{chart.series.length === 1 ? "" : "s"}</span></div>
-            {chart.series.length ? <><div className="chart-legend" aria-label="Destination legend">{chart.series.map((series) => <span key={series.destination_id}><i style={{ backgroundColor: series.color }} />{series.name}</span>)}</div><LatencyChart key={range} series={chart.series} rangeLabel={RANGE_LABELS[range]} rangeHours={range} /></> : <div className="chart-empty">{loading ? "Loading latency measurements…" : "No latency measurements in this time range."}</div>}
+            {chart.series.length ? <LatencyChart key={`${range}-${chartResetKey}`} series={chart.series} rangeLabel={RANGE_LABELS[range]} rangeHours={range} refreshSeconds={refreshSeconds} onRefreshSecondsChange={setRefreshSeconds} /> : <div className="chart-empty">{loading ? "Loading latency measurements…" : "No latency measurements in this time range."}</div>}
           </article>
 
           <article className="panel health-panel" id="destinations">

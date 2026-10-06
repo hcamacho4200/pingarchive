@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ColorType,
   CrosshairMode,
@@ -24,9 +24,12 @@ type LatencyChartProps = {
   series: LatencyChartSeries[];
   rangeLabel: string;
   rangeHours: number;
+  refreshSeconds: number;
+  onRefreshSecondsChange: (seconds: number) => void;
 };
 
 type StoredSeries = Omit<LatencyChartSeries, "points"> & { points: Map<number, number> };
+const LIVE_RIGHT_BUFFER_PX = 64;
 
 function chartColors() {
   const light = document.documentElement.dataset.theme === "light";
@@ -47,12 +50,26 @@ function applyTheme(chart: IChartApi) {
   });
 }
 
-export function LatencyChart({ series, rangeLabel, rangeHours }: LatencyChartProps) {
+export function LatencyChart({ series, rangeLabel, rangeHours, refreshSeconds, onRefreshSecondsChange }: LatencyChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const lineRefs = useRef(new Map<number, ISeriesApi<"Line">>());
   const dataRef = useRef(new Map<number, StoredSeries>());
   const initializedRef = useRef(false);
+  const autoFollowRef = useRef(true);
+  const [autoFollow, setAutoFollow] = useState(true);
+
+  const pauseAutoFollow = useCallback(() => {
+    autoFollowRef.current = false;
+    setAutoFollow(false);
+  }, []);
+
+  function resumeAutoFollow() {
+    autoFollowRef.current = true;
+    setAutoFollow(true);
+    chartRef.current?.timeScale().applyOptions({ rightOffsetPixels: LIVE_RIGHT_BUFFER_PX });
+    chartRef.current?.timeScale().scrollToRealTime();
+  }
 
   const mergeAndRender = useCallback((incoming: LatencyChartSeries[]) => {
     const chart = chartRef.current;
@@ -76,7 +93,7 @@ export function LatencyChart({ series, rangeLabel, rangeHours }: LatencyChartPro
         line = chart.addSeries(LineSeries, {
           color: stored.color,
           lineWidth: 2,
-          title: stored.name,
+          title: "",
           priceLineVisible: false,
           lastValueVisible: true,
           crosshairMarkerVisible: true,
@@ -84,7 +101,7 @@ export function LatencyChart({ series, rangeLabel, rangeHours }: LatencyChartPro
         });
         lineRefs.current.set(item.destination_id, line);
       } else {
-        line.applyOptions({ color: stored.color, title: stored.name });
+        line.applyOptions({ color: stored.color, title: "" });
       }
       line.setData(
         [...stored.points.entries()]
@@ -109,7 +126,7 @@ export function LatencyChart({ series, rangeLabel, rangeHours }: LatencyChartPro
       handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
       localization: { priceFormatter: (value: number) => `${value.toFixed(2)} ms` },
       rightPriceScale: { autoScale: true, scaleMargins: { top: 0.1, bottom: 0.1 } },
-      timeScale: { timeVisible: true, secondsVisible: true, rightOffset: 3, fixLeftEdge: false, fixRightEdge: false },
+      timeScale: { timeVisible: true, secondsVisible: true, rightOffsetPixels: LIVE_RIGHT_BUFFER_PX, fixLeftEdge: false, fixRightEdge: false },
     });
     applyTheme(chart);
     chartRef.current = chart;
@@ -122,7 +139,17 @@ export function LatencyChart({ series, rangeLabel, rangeHours }: LatencyChartPro
     const themeObserver = new MutationObserver(() => applyTheme(chart));
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
+    const handlePointerMove = (event: PointerEvent) => {
+      if (event.buttons !== 0) pauseAutoFollow();
+    };
+    container.addEventListener("pointermove", handlePointerMove);
+    container.addEventListener("wheel", pauseAutoFollow, { passive: true });
+    container.addEventListener("touchmove", pauseAutoFollow, { passive: true });
+
     return () => {
+      container.removeEventListener("pointermove", handlePointerMove);
+      container.removeEventListener("wheel", pauseAutoFollow);
+      container.removeEventListener("touchmove", pauseAutoFollow);
       themeObserver.disconnect();
       resizeObserver.disconnect();
       lines.clear();
@@ -130,14 +157,13 @@ export function LatencyChart({ series, rangeLabel, rangeHours }: LatencyChartPro
       chartRef.current = null;
       chart.remove();
     };
-  }, []);
+  }, [pauseAutoFollow]);
 
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
 
     const visibleRange = chart.timeScale().getVisibleRange();
-    const wasFollowingLatest = !initializedRef.current || chart.timeScale().scrollPosition() <= 3;
     mergeAndRender(series);
 
     if (!initializedRef.current) {
@@ -148,8 +174,11 @@ export function LatencyChart({ series, rangeLabel, rangeHours }: LatencyChartPro
         from: (latestTimestamp - (rangeHours * 60 * 60)) as UTCTimestamp,
         to: latestTimestamp as UTCTimestamp,
       });
+      chart.timeScale().applyOptions({ rightOffsetPixels: LIVE_RIGHT_BUFFER_PX });
+      chart.timeScale().scrollToRealTime();
       initializedRef.current = true;
-    } else if (wasFollowingLatest) {
+    } else if (autoFollowRef.current) {
+      chart.timeScale().applyOptions({ rightOffsetPixels: LIVE_RIGHT_BUFFER_PX });
       chart.timeScale().scrollToRealTime();
     } else if (visibleRange) {
       chart.timeScale().setVisibleRange(visibleRange);
@@ -157,11 +186,30 @@ export function LatencyChart({ series, rangeLabel, rangeHours }: LatencyChartPro
   }, [mergeAndRender, rangeHours, series]);
 
   return (
-    <div
-      ref={containerRef}
-      className="latency-chart"
-      role="img"
-      aria-label={`Interactive latency history for ${series.length} destinations, initially showing the last ${rangeLabel}. Drag left to load older data and use the mouse wheel to zoom.`}
-    />
+    <div className="latency-chart-shell">
+      <div className="chart-meta-row">
+        <div className="chart-legend" aria-label="Destination legend">
+          {series.map((item) => <span key={item.destination_id}><i style={{ backgroundColor: item.color }} />{item.name}</span>)}
+        </div>
+        <div className="chart-live-controls">
+          <label className="chart-refresh-control">
+            <span>Refresh</span>
+            <select value={refreshSeconds} onChange={(event) => onRefreshSecondsChange(Number(event.target.value))} aria-label="Chart refresh interval">
+              {[1, 5, 20, 60].map((seconds) => <option key={seconds} value={seconds}>{seconds}s</option>)}
+            </select>
+          </label>
+          <div className={`chart-follow-status ${autoFollow ? "active" : "paused"}`} role="status">
+            <span><i />{autoFollow ? "Following live data" : "Live follow paused"}</span>
+            {!autoFollow && <button type="button" onClick={resumeAutoFollow}>Resume live</button>}
+          </div>
+        </div>
+      </div>
+      <div
+        ref={containerRef}
+        className="latency-chart"
+        role="img"
+        aria-label={`Interactive latency history for ${series.length} destinations, initially showing the last ${rangeLabel}. Drag to pan and use the mouse wheel to zoom.`}
+      />
+    </div>
   );
 }
