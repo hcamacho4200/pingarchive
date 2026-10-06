@@ -14,6 +14,8 @@
 - support for IPV4 dotted decimal addresses
 - added initial support for a frontend
 - add support for ping destination setup
+- add initial GUI implementation (Codex)
+- added support for TradingView
 
 
 [0.0.1] initial testing of ping-engine in golang

@@ -49,6 +49,12 @@ func main() {
 	}
 
 	settings := NewSettings()
+	writerContext, cancelWriter := context.WithTimeout(context.Background(), 10*time.Second)
+	measurementWriter, err := NewQuestDBWriter(writerContext, settings.qwestDBAddress)
+	cancelWriter()
+	if err != nil {
+		log.Fatalf("Unable to initialize QuestDB writer: %v", err)
+	}
 
 	backendClient := NewBackendClient("http://" + settings.apiBindHost + ":" + settings.apiBindPort)
 	destinations, err := backendClient.GetPingDestinations()
@@ -87,7 +93,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	go receivePings(ctx, conn, packetTracker, pingStats, replies, receiveErrors)
 	go reaperScan(ctx, packetTracker, pingStats, receiveTimeout)
-	go processPings(ctx, packetTracker, pingStats, replies, receiveErrors, receiveTimeout)
+	go processPings(ctx, packetTracker, pingStats, replies, receiveErrors, receiveTimeout, measurementWriter)
 
 	for index, pingDestination := range destinations {
 		if pingDestination.Enabled == false {
@@ -144,7 +150,7 @@ func startIPV4Pinger(ip *net.IPAddr, pingDestination PingDestination, workerBase
 	fmt.Printf("PingArchive-engine monitoring %s (%s)\n", pingDestination.Name, ip)
 	workerID := workerBaseID + index
 	if errStart := manager.Start(workerID, func(ctx context.Context, worker *Worker) {
-		if errStartPinger := startPinger(ctx, worker, conn, ip, workerID, packetTracker, pingStats, receiveErrors, pingDestination.PingInterval); errStartPinger != nil {
+		if errStartPinger := startPinger(ctx, worker, conn, ip, pingDestination, workerID, packetTracker, pingStats, receiveErrors, pingDestination.PingInterval); errStartPinger != nil {
 			fmt.Println(errStartPinger)
 		}
 	}); errStart != nil {
@@ -155,7 +161,7 @@ func startIPV4Pinger(ip *net.IPAddr, pingDestination PingDestination, workerBase
 // startPinger
 // - starts the ping loop
 // - sends a ping
-func startPinger(ctx context.Context, worker *Worker, conn *icmp.PacketConn, ip *net.IPAddr, id int, packetTracker *SafeMap[pingTrackerKey, PingData], pingStats *PingStats, receiveErrors chan<- PingData, interval int) error {
+func startPinger(ctx context.Context, worker *Worker, conn *icmp.PacketConn, ip *net.IPAddr, pingDestination PingDestination, id int, packetTracker *SafeMap[pingTrackerKey, PingData], pingStats *PingStats, receiveErrors chan<- PingData, interval int) error {
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	defer ticker.Stop()
 	sequenceNumber := uint16(1)
@@ -168,17 +174,21 @@ func startPinger(ctx context.Context, worker *Worker, conn *icmp.PacketConn, ip 
 			sentAt := time.Now()
 			worker.SetLastRunAt(sentAt)
 			newPingData := PingData{
-				id:       id,
-				target:   ip.IP,
-				sequence: sequenceNumber,
-				sentAt:   sentAt,
-				err:      nil,
+				id:              id,
+				destinationID:   pingDestination.ID,
+				destinationName: pingDestination.Name,
+				target:          ip.IP,
+				sequence:        sequenceNumber,
+				sentAt:          sentAt,
+				err:             nil,
 			}
 
-			packetTracker.Set(pingTrackerKey{workerId: id, sequence: sequenceNumber}, newPingData)
+			trackerKey := pingTrackerKey{workerId: id, sequence: sequenceNumber}
+			packetTracker.Set(trackerKey, newPingData)
 			if err := sendPing(conn, ip, id, sequenceNumber); err != nil {
 				pingStats.IncrementFailure()
 				newPingData.err = err
+				packetTracker.Remove(trackerKey)
 				receiveErrors <- newPingData
 			}
 			sequenceNumber++
@@ -284,7 +294,7 @@ func receivePings(
 				pingStats.IncrementSkipped()
 			} else {
 				data.UpdateReceivedAt(receivedAt)
-				data.target = peer.(*net.UDPAddr).IP
+				data.source = peer
 				packetTracker.Set(pkey, data)
 				pingStats.IncrementSuccess()
 				replies <- data
@@ -353,18 +363,30 @@ func performReaping(packetTracker *SafeMap[pingTrackerKey, PingData], pingStats 
 	}
 }
 
-func processPings(ctx context.Context, packetTracker *SafeMap[pingTrackerKey, PingData], pingStats *PingStats, replies <-chan PingData, receiveErrors <-chan PingData, receiveTimeout <-chan PingData) {
+func processPings(ctx context.Context, packetTracker *SafeMap[pingTrackerKey, PingData], pingStats *PingStats, replies <-chan PingData, receiveErrors <-chan PingData, receiveTimeout <-chan PingData, writer PingMeasurementWriter) {
+	writeMeasurement := func(data PingData, outcome string) {
+		capturePing(data)
+		if err := writer.WritePing(ctx, data, outcome); err != nil {
+			log.Printf("Unable to write %s ping measurement for destination %d: %v", outcome, data.destinationID, err)
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			fmt.Println("Process Pings stopping")
+			closeContext, cancelClose := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancelClose()
+			if err := writer.Close(closeContext); err != nil {
+				log.Printf("Unable to close QuestDB writer: %v", err)
+			}
 			return
 		case data := <-replies:
-			fmt.Printf("success: %+v\n", data)
+			writeMeasurement(data, "reply")
 		case data := <-receiveErrors:
-			fmt.Printf("error: %+v\n", data)
+			writeMeasurement(data, "send_error")
 		case data := <-receiveTimeout:
-			fmt.Printf("timeout: %+v\n", data)
+			writeMeasurement(data, "timeout")
 		}
 	}
 }

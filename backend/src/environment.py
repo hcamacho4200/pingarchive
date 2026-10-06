@@ -2,16 +2,12 @@
 
 import os
 from dataclasses import dataclass
-from xxlimited import Str
 
 from dotenv import load_dotenv
 
 # Load .env exactly once, at import time
 ENV_PATH = ".env"
 load_dotenv(ENV_PATH)
-
-print(os.getenv("API_BIND_HOST"))
-print(os.getenv("API_BIND_PORT"))
 
 @dataclass(frozen=True)
 class Settings:
@@ -37,6 +33,9 @@ class Settings:
     ping_engine_host: str
     ping_engine_port: int
 
+    # QuestDB
+    questdb_address: str = "localhost:9000"
+
     @staticmethod
     def convert_bool(value: str | None, default=False) -> bool:
         """Convert string to boolean."""
@@ -61,4 +60,5 @@ def get_settings() -> Settings:
         api_workers=int(os.getenv("API_WORKERS", str(1))),
         ping_engine_host=os.getenv("PING_ENGINE_HOST", "0.0.0.0"),
         ping_engine_port=int(os.getenv("PING_ENGINE_PORT", str(8100))),
+        questdb_address=os.getenv("QWEST_DB_ADDRESS", "localhost:9000"),
     )

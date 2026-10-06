@@ -1,126 +1,147 @@
-type Destination = {
-  name: string;
-  address: string;
-  region: string;
-  latency: number;
-  availability: string;
-  status: "Healthy" | "Degraded";
-};
+"use client";
 
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { LatencyChart } from "./latency-chart";
 import { ThemeToggle } from "./theme-toggle";
 
-const destinations: Destination[] = [
-  { name: "Google DNS", address: "8.8.8.8", region: "Global", latency: 18, availability: "99.99%", status: "Healthy" },
-  { name: "Cloudflare DNS", address: "1.1.1.1", region: "Global", latency: 14, availability: "100%", status: "Healthy" },
-  { name: "Quad9 DNS", address: "9.9.9.9", region: "Global", latency: 31, availability: "99.72%", status: "Degraded" },
-  { name: "Core gateway", address: "10.0.0.1", region: "Chicago", latency: 3, availability: "100%", status: "Healthy" },
-];
+type TimeRange = 1 | 24 | 168 | 720;
+type LatencyPoint = { timestamp: string; average_latency_ms: number };
+type LatencySeries = { destination_id: number; name: string; points: LatencyPoint[] };
+type DestinationHealth = {
+  destination_id: number;
+  name: string;
+  address: string;
+  average_latency_ms: number | null;
+  availability_pct: number;
+  last_seen: string;
+  latest_outcome: string;
+  status: "Healthy" | "Degraded";
+};
+type PingEvent = {
+  timestamp: string;
+  destination_name: string;
+  address: string;
+  latency_ms: number | null;
+  outcome: string;
+};
+type OverviewData = {
+  range_hours: number;
+  average_latency_ms: number | null;
+  availability_pct: number | null;
+  packet_loss_pct: number | null;
+  latency_series: LatencySeries[];
+  destinations: DestinationHealth[];
+  recent_events: PingEvent[];
+};
+type ApiResponse<T> = { data: T };
 
-const events = [
-  { time: "14:32:18", destination: "Cloudflare DNS", address: "1.1.1.1", latency: "13.8 ms", result: "Reply" },
-  { time: "14:32:17", destination: "Google DNS", address: "8.8.8.8", latency: "18.4 ms", result: "Reply" },
-  { time: "14:32:16", destination: "Quad9 DNS", address: "9.9.9.9", latency: "—", result: "Timeout" },
-  { time: "14:32:15", destination: "Core gateway", address: "10.0.0.1", latency: "2.7 ms", result: "Reply" },
-  { time: "14:32:14", destination: "Cloudflare DNS", address: "1.1.1.1", latency: "14.1 ms", result: "Reply" },
-];
-
-const series = [21, 18, 19, 17, 25, 22, 16, 18, 15, 17, 24, 19, 18, 16, 14, 28, 23, 19, 17, 18, 16, 21, 20, 15];
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8002/api/v1";
+const RANGE_LABELS: Record<TimeRange, string> = { 1: "1H", 24: "24H", 168: "7D", 720: "30D" };
+const SERIES_COLORS = ["#0d9488", "#4f7cff", "#e08b37", "#b45ac4", "#d64f6b", "#22a6c7", "#84a344", "#8b6fd9"];
 
 function SignalIcon() {
   return <span className="signal-icon" aria-hidden="true"><i /><i /><i /></span>;
 }
 
+function formatNumber(value: number | null, digits = 1) {
+  return value === null ? "—" : value.toFixed(digits);
+}
+
+function formatTime(value: string) {
+  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(value));
+}
+
+function formatLastSeen(value: string) {
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  return `${Math.floor(seconds / 3600)}h ago`;
+}
+
 export default function Home() {
-  const points = series
-    .map((value, index) => `${(index / (series.length - 1)) * 100},${100 - ((value - 10) / 24) * 100}`)
-    .join(" ");
+  const [range, setRange] = useState<TimeRange>(24);
+  const [overview, setOverview] = useState<OverviewData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadOverview = useCallback(async (selectedRange: TimeRange) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/ping_measurements/overview?hours=${selectedRange}`, { cache: "no-store" });
+      const payload = await response.json() as ApiResponse<OverviewData> | { detail?: string };
+      if (!response.ok) throw new Error("detail" in payload && payload.detail ? payload.detail : `Request failed (${response.status})`);
+      setOverview((payload as ApiResponse<OverviewData>).data);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to load QuestDB measurements");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadOverview(range); }, [loadOverview, range]);
+  useEffect(() => {
+    const timer = window.setInterval(() => void loadOverview(range), 30_000);
+    return () => window.clearInterval(timer);
+  }, [loadOverview, range]);
+
+  const chart = useMemo(() => {
+    const sourceSeries = overview?.latency_series ?? [];
+    return { series: sourceSeries.map((item, seriesIndex) => ({ ...item, color: SERIES_COLORS[seriesIndex % SERIES_COLORS.length] })) };
+  }, [overview]);
+
+  const destinations = overview?.destinations ?? [];
+  const events = overview?.recent_events ?? [];
+  const allHealthy = destinations.length > 0 && destinations.every((destination) => destination.status === "Healthy");
 
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark"><SignalIcon /></div>
-          <div><strong>PingArchive</strong><span>Network observability</span></div>
-        </div>
+        <div className="brand"><div className="brand-mark"><SignalIcon /></div><div><strong>PingArchive</strong><span>Network observability</span></div></div>
         <nav aria-label="Primary navigation">
           <a className="nav-item active" href="#overview"><span className="nav-glyph">◫</span>Overview</a>
           <a className="nav-item" href="#destinations"><span className="nav-glyph">◎</span>Destinations</a>
           <a className="nav-item" href="#events"><span className="nav-glyph">≋</span>Ping events</a>
           <a className="nav-item" href="/settings"><span className="nav-glyph">⚙</span>Settings</a>
         </nav>
-        <div className="sidebar-footer">
-          <div className="engine-state"><span className="status-dot" /><div><strong>Engine online</strong><span>Last sample 2s ago</span></div></div>
-          <div className="version">PING ENGINE · V0.1</div>
-        </div>
+        <div className="sidebar-footer"><div className="engine-state"><span className={`status-dot ${error ? "status-error" : ""}`} /><div><strong>{error ? "Data unavailable" : "QuestDB connected"}</strong><span>{loading ? "Refreshing…" : "Updates every 30s"}</span></div></div><div className="version">PING ENGINE · V0.1</div></div>
       </aside>
 
       <section className="workspace" id="overview">
         <header className="topbar">
-          <div>
-            <p className="eyebrow">NETWORK OVERVIEW</p>
-            <h1>Good afternoon</h1>
-            <p className="subhead">All systems are responding normally.</p>
-          </div>
-          <div className="topbar-actions">
-            <ThemeToggle />
-            <button className="icon-button" aria-label="Notifications">●<span className="notification-dot" /></button>
-            <a className="primary-button" href="/settings"><span>＋</span> Add destination</a>
-          </div>
+          <div><p className="eyebrow">NETWORK OVERVIEW</p><h1>Network health</h1><p className="subhead">{error ? "Live measurements are temporarily unavailable." : allHealthy ? "All monitored destinations are responding normally." : destinations.length ? "One or more destinations need attention." : "Waiting for the first ping measurements."}</p></div>
+          <div className="topbar-actions"><ThemeToggle /><button className="icon-button" aria-label="Refresh measurements" onClick={() => void loadOverview(range)}>↻<span className="notification-dot" /></button><a className="primary-button" href="/settings"><span>＋</span> Add destination</a></div>
         </header>
 
+        {error && <div className="error-banner overview-error" role="alert"><strong>QuestDB data unavailable</strong><span>{error}</span><button onClick={() => void loadOverview(range)}>Retry</button></div>}
+
         <section className="metrics" aria-label="Network summary">
-          <article className="metric-card"><div className="metric-label"><span>ACTIVE DESTINATIONS</span><span className="metric-icon">◎</span></div><strong>4</strong><p><span className="positive">↑ 1</span> this week</p></article>
-          <article className="metric-card"><div className="metric-label"><span>AVERAGE LATENCY</span><span className="metric-icon">⌁</span></div><strong>16.5 <small>ms</small></strong><p><span className="positive">↓ 2.4 ms</span> from yesterday</p></article>
-          <article className="metric-card"><div className="metric-label"><span>PACKET LOSS</span><span className="metric-icon">◇</span></div><strong>0.18<small>%</small></strong><p><span className="warning">↑ 0.06%</span> from yesterday</p></article>
-          <article className="metric-card"><div className="metric-label"><span>24H AVAILABILITY</span><span className="metric-icon">✓</span></div><strong>99.94<small>%</small></strong><p><span className="positive">Within target</span></p></article>
+          <article className="metric-card"><div className="metric-label"><span>OBSERVED DESTINATIONS</span><span className="metric-icon">◎</span></div><strong>{destinations.length}</strong><p>{loading ? "Refreshing…" : `Last ${RANGE_LABELS[range]}`}</p></article>
+          <article className="metric-card"><div className="metric-label"><span>AVERAGE LATENCY</span><span className="metric-icon">⌁</span></div><strong>{formatNumber(overview?.average_latency_ms ?? null)} <small>ms</small></strong><p><span className="positive">Live</span> QuestDB aggregate</p></article>
+          <article className="metric-card"><div className="metric-label"><span>PACKET LOSS</span><span className="metric-icon">◇</span></div><strong>{formatNumber(overview?.packet_loss_pct ?? null, 2)}<small>%</small></strong><p>Across the selected range</p></article>
+          <article className="metric-card"><div className="metric-label"><span>AVAILABILITY</span><span className="metric-icon">✓</span></div><strong>{formatNumber(overview?.availability_pct ?? null, 2)}<small>%</small></strong><p><span className={allHealthy ? "positive" : "warning"}>{allHealthy ? "Within target" : "Review health"}</span></p></article>
         </section>
 
         <section className="dashboard-grid">
           <article className="panel chart-panel">
-            <div className="panel-heading">
-              <div><h2>Latency history</h2><p>Average response time across all destinations</p></div>
-              <div className="range-control" aria-label="Time range"><button>1H</button><button className="selected">24H</button><button>7D</button><button>30D</button></div>
-            </div>
-            <div className="chart-summary"><strong>16.5 ms</strong><span><i /> Global average</span></div>
-            <div className="chart" role="img" aria-label="Latency fluctuated between 14 and 28 milliseconds over the last 24 hours">
-              <div className="y-labels"><span>40</span><span>30</span><span>20</span><span>10</span><span>0</span></div>
-              <div className="plot">
-                <div className="grid-lines"><i /><i /><i /><i /><i /></div>
-                <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                  <defs><linearGradient id="chartFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#55d6be" stopOpacity=".3"/><stop offset="100%" stopColor="#55d6be" stopOpacity="0"/></linearGradient></defs>
-                  <polygon points={`0,100 ${points} 100,100`} fill="url(#chartFill)" />
-                  <polyline points={points} fill="none" stroke="#55d6be" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
-                </svg>
-                <div className="x-labels"><span>12 AM</span><span>6 AM</span><span>12 PM</span><span>6 PM</span><span>Now</span></div>
-              </div>
-            </div>
+            <div className="panel-heading"><div><h2>Latency history</h2><p>Average reply time from QuestDB</p></div><div className="range-control" aria-label="Time range">{(Object.keys(RANGE_LABELS).map(Number) as TimeRange[]).map((hours) => <button key={hours} className={range === hours ? "selected" : ""} onClick={() => setRange(hours)}>{RANGE_LABELS[hours]}</button>)}</div></div>
+            <div className="chart-summary"><strong>{formatNumber(overview?.average_latency_ms ?? null)} ms</strong><span>Average across {chart.series.length} destination{chart.series.length === 1 ? "" : "s"}</span></div>
+            {chart.series.length ? <><div className="chart-legend" aria-label="Destination legend">{chart.series.map((series) => <span key={series.destination_id}><i style={{ backgroundColor: series.color }} />{series.name}</span>)}</div><LatencyChart series={chart.series} rangeLabel={RANGE_LABELS[range]} /></> : <div className="chart-empty">{loading ? "Loading latency measurements…" : "No latency measurements in this time range."}</div>}
           </article>
 
           <article className="panel health-panel" id="destinations">
-            <div className="panel-heading"><div><h2>Destination health</h2><p>Current status</p></div><a href="#events">View all</a></div>
-            <div className="destination-list">
-              {destinations.map((destination) => (
-                <div className="destination" key={destination.address}>
-                  <div className={`destination-mark ${destination.status === "Healthy" ? "healthy" : "degraded"}`}><SignalIcon /></div>
-                  <div className="destination-name"><strong>{destination.name}</strong><span>{destination.address} · {destination.region}</span></div>
-                  <div className="destination-stat"><strong>{destination.latency} ms</strong><span>{destination.availability}</span></div>
-                  <span className={`status-badge ${destination.status.toLowerCase()}`}>{destination.status}</span>
-                </div>
-              ))}
-            </div>
+            <div className="panel-heading"><div><h2>Destination health</h2><p>QuestDB measurements · {RANGE_LABELS[range]}</p></div><a href="/settings">Manage</a></div>
+            {destinations.length ? <div className="destination-list">{destinations.map((destination) => (
+              <div className="destination" key={destination.destination_id}><div className={`destination-mark ${destination.status === "Healthy" ? "healthy" : "degraded"}`}><SignalIcon /></div><div className="destination-name"><strong>{destination.name}</strong><span>{destination.address} · {formatLastSeen(destination.last_seen)}</span></div><div className="destination-stat"><strong>{formatNumber(destination.average_latency_ms)} ms</strong><span>{destination.availability_pct.toFixed(2)}%</span></div><span className={`status-badge ${destination.status.toLowerCase()}`}>{destination.status}</span></div>
+            ))}</div> : <div className="empty-state"><strong>{loading ? "Loading health data…" : "No destination data"}</strong><span>Measurements will appear after the ping engine writes to QuestDB.</span></div>}
           </article>
         </section>
 
         <section className="panel events-panel" id="events">
-          <div className="panel-heading"><div><h2>Recent ping events</h2><p>Latest responses received by the ping engine</p></div><button className="secondary-button">Export data</button></div>
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>TIME</th><th>DESTINATION</th><th>ADDRESS</th><th>LATENCY</th><th>RESULT</th></tr></thead>
-              <tbody>{events.map((event) => (
-                <tr key={`${event.time}-${event.address}`}><td className="mono">{event.time}</td><td><strong>{event.destination}</strong></td><td className="mono muted">{event.address}</td><td className="mono">{event.latency}</td><td><span className={`event-result ${event.result.toLowerCase()}`}><i />{event.result}</span></td></tr>
-              ))}</tbody>
-            </table>
-          </div>
+          <div className="panel-heading"><div><h2>Recent ping events</h2><p>Latest measurements stored in QuestDB</p></div><button className="secondary-button" onClick={() => void loadOverview(range)}>Refresh</button></div>
+          {events.length ? <div className="table-wrap"><table><thead><tr><th>TIME</th><th>DESTINATION</th><th>ADDRESS</th><th>LATENCY</th><th>RESULT</th></tr></thead><tbody>{events.map((event) => (
+            <tr key={`${event.timestamp}-${event.destination_name}`}><td className="mono">{formatTime(event.timestamp)}</td><td><strong>{event.destination_name}</strong></td><td className="mono muted">{event.address}</td><td className="mono">{event.latency_ms === null ? "—" : `${event.latency_ms.toFixed(2)} ms`}</td><td><span className={`event-result ${event.outcome === "reply" ? "reply" : "timeout"}`}><i />{event.outcome.replace("_", " ")}</span></td></tr>
+          ))}</tbody></table></div> : <div className="empty-state compact-empty">No recent ping events.</div>}
         </section>
       </section>
     </main>
