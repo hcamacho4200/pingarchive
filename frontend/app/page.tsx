@@ -46,7 +46,7 @@ export default function Home() {
           <a className="nav-item active" href="#overview"><span className="nav-glyph">◫</span>Overview</a>
           <a className="nav-item" href="#destinations"><span className="nav-glyph">◎</span>Destinations</a>
           <a className="nav-item" href="#events"><span className="nav-glyph">≋</span>Ping events</a>
-          <a className="nav-item" href="#settings"><span className="nav-glyph">⚙</span>Settings</a>
+          <a className="nav-item" href="/settings"><span className="nav-glyph">⚙</span>Settings</a>
         </nav>
         <div className="sidebar-footer">
           <div className="engine-state"><span className="status-dot" /><div><strong>Engine online</strong><span>Last sample 2s ago</span></div></div>
@@ -64,7 +64,7 @@ export default function Home() {
           <div className="topbar-actions">
             <ThemeToggle />
             <button className="icon-button" aria-label="Notifications">●<span className="notification-dot" /></button>
-            <button className="primary-button"><span>＋</span> Add destination</button>
+            <a className="primary-button" href="/settings"><span>＋</span> Add destination</a>
           </div>
         </header>
 

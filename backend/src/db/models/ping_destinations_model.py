@@ -1,13 +1,12 @@
 """Plugin Credential Model"""
 
-from typing import TYPE_CHECKING, Self
+from typing import Self
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Enum,
     String,
-    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -49,3 +48,42 @@ class PingDestinationsModel(ReprMixin, TimestampMixin, Base):
     def get_list(cls, session) -> list[Self]:
         """Get list of plugins"""
         return session.query(cls).all()
+
+    @classmethod
+    def get_by_id(cls, session, destination_id: int) -> Self | None:
+        """Get a ping destination by ID."""
+        return session.query(cls).filter_by(id=destination_id).first()
+
+    @classmethod
+    def insert(cls, session, **params) -> Self:
+        """Insert a ping destination."""
+        destination = cls(**params)
+        session.add(destination)
+        session.flush()
+        session.refresh(destination)
+        return destination
+
+    @classmethod
+    def update(cls, session, destination_id: int, **params) -> Self:
+        """Update a ping destination."""
+        destination = cls.get_by_id(session, destination_id)
+        if destination is None:
+            raise ValueError(f"Ping destination {destination_id} was not found")
+
+        for field in ("name", "ipv4", "ipv6", "host", "location_zone", "address_type", "ping_interval", "enabled"):
+            if field in params:
+                setattr(destination, field, params[field])
+
+        session.add(destination)
+        session.flush()
+        session.refresh(destination)
+        return destination
+
+    @classmethod
+    def delete(cls, session, destination_id: int) -> Self:
+        """Delete a ping destination."""
+        destination = cls.get_by_id(session, destination_id)
+        if destination is None:
+            raise ValueError(f"Ping destination {destination_id} was not found")
+        session.delete(destination)
+        return destination

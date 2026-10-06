@@ -1,14 +1,12 @@
 """Plugins API router"""
 
-import json
 import logging
-from typing import cast
 
 from fastapi import APIRouter, HTTPException
 
 from api.request_context import build_meta, request_meta_context
 from api.schema.api_response_schema import ApiResponse
-from api.schema.ping_destinations_schema import PingDestinationsSchema
+from api.schema.ping_destinations_schema import PingDestinationsSchema, PingDestinationWriteSchema
 from db import Database
 from db.models.ping_destinations_model import PingDestinationsModel
 from enums.address_type import AddressTypeEnum
@@ -17,6 +15,23 @@ from enums.ping_interval import PingIntervalEnum
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ping_destinations", tags=["ping_destinations"])
+
+
+def _to_schema(item: PingDestinationsModel) -> PingDestinationsSchema:
+    """Convert a database record to the public API schema."""
+    return PingDestinationsSchema(
+        id=item.id,
+        name=item.name,
+        ipv4=item.ipv4,
+        ipv6=item.ipv6,
+        host=item.host,
+        address_type=AddressTypeEnum(item.address_type),
+        location_zone=LocationZonesEnum(item.location_zone),
+        ping_interval=PingIntervalEnum(item.ping_interval),
+        enabled=item.enabled,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
 
 
 @router.get("", summary="Get list configured ping destinations", response_model=ApiResponse[list[PingDestinationsSchema]])
@@ -33,23 +48,55 @@ def ping_destinations():
                 raise HTTPException(status_code=500, detail=str(e)) from e
     return ApiResponse(
         meta=build_meta(meta),
-        data=[
-            PingDestinationsSchema(
-                id=item.id,
-                name=item.name,
-                ipv4=item.ipv4,
-                ipv6=item.ipv6,
-                host=item.host,
-                address_type=AddressTypeEnum(item.address_type),
-                location_zone=LocationZonesEnum(item.location_zone),
-                ping_interval=PingIntervalEnum(item.ping_interval),
-                enabled=item.enabled,
-                created_at=item.created_at,
-                updated_at=item.updated_at,
-            )
-            for item in data_list
-        ],
+        data=[_to_schema(item) for item in data_list],
     )
+
+
+@router.post("", summary="Create a ping destination", response_model=ApiResponse[PingDestinationsSchema], status_code=201)
+def create_ping_destination(request: PingDestinationWriteSchema):
+    """Create a ping destination."""
+    with request_meta_context() as meta:
+        dbp = Database()
+        with dbp.session_context_write() as session:
+            try:
+                data = _to_schema(PingDestinationsModel.insert(session, **request.model_dump()))
+            except Exception as exc:
+                logger.exception("Unable to create ping destination")
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ApiResponse(meta=build_meta(meta), data=data)
+
+
+@router.put("/{destination_id}", summary="Update a ping destination", response_model=ApiResponse[PingDestinationsSchema])
+def update_ping_destination(destination_id: int, request: PingDestinationWriteSchema):
+    """Update a ping destination, including its enabled state."""
+    with request_meta_context() as meta:
+        dbp = Database()
+        with dbp.session_context_write() as session:
+            try:
+                data = _to_schema(PingDestinationsModel.update(session, destination_id, **request.model_dump()))
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except Exception as exc:
+                logger.exception("Unable to update ping destination")
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ApiResponse(meta=build_meta(meta), data=data)
+
+
+@router.delete("/{destination_id}", summary="Delete a ping destination", response_model=ApiResponse[PingDestinationsSchema])
+def delete_ping_destination(destination_id: int):
+    """Delete a ping destination."""
+    with request_meta_context() as meta:
+        dbp = Database()
+        with dbp.session_context_write() as session:
+            try:
+                destination = PingDestinationsModel.delete(session, destination_id)
+                data = _to_schema(destination)
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except Exception as exc:
+                logger.exception("Unable to delete ping destination")
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ApiResponse(meta=build_meta(meta), data=data)
 
 
 # @router.post("/validate_config", summary="Validate a configuration value", response_model=ApiResponse[PluginAPIValidateResponse])
