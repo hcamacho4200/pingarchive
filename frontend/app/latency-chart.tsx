@@ -66,6 +66,8 @@ export function LatencyChart({ series, rangeLabel, rangeHours, refreshSeconds, o
   const initializedRef = useRef(false);
   const autoFollowRef = useRef(true);
   const [autoFollow, setAutoFollow] = useState(true);
+  const hiddenSeriesRef = useRef(new Set<number>());
+  const [hiddenSeries, setHiddenSeries] = useState<Set<number>>(() => new Set());
 
   const pauseAutoFollow = useCallback(() => {
     autoFollowRef.current = false;
@@ -77,6 +79,18 @@ export function LatencyChart({ series, rangeLabel, rangeHours, refreshSeconds, o
     setAutoFollow(true);
     chartRef.current?.timeScale().applyOptions({ rightOffsetPixels: LIVE_RIGHT_BUFFER_PX });
     chartRef.current?.timeScale().scrollToRealTime();
+  }
+
+  function toggleSeries(destinationId: number) {
+    const next = new Set(hiddenSeriesRef.current);
+    const visible = next.has(destinationId);
+    if (visible) next.delete(destinationId);
+    else next.add(destinationId);
+    hiddenSeriesRef.current = next;
+    setHiddenSeries(next);
+    for (const line of lineRefs.current.get(destinationId) ?? []) {
+      line.applyOptions({ visible });
+    }
   }
 
   const mergeAndRender = useCallback((incoming: LatencyChartSeries[]) => {
@@ -131,6 +145,7 @@ export function LatencyChart({ series, rangeLabel, rangeHours, refreshSeconds, o
           lastValueVisible: index === segments.length - 1,
           crosshairMarkerVisible: true,
           crosshairMarkerRadius: 4,
+          visible: !hiddenSeriesRef.current.has(item.destination_id),
         });
         line.setData(points);
         return line;
@@ -217,7 +232,10 @@ export function LatencyChart({ series, rangeLabel, rangeHours, refreshSeconds, o
     <div className="latency-chart-shell">
       <div className="chart-meta-row">
         <div className="chart-legend" aria-label="Destination legend">
-          {series.map((item) => <span key={item.destination_id}><i style={{ backgroundColor: item.color }} />{item.name}</span>)}
+          {series.map((item) => {
+            const hidden = hiddenSeries.has(item.destination_id);
+            return <button type="button" key={item.destination_id} className={hidden ? "hidden" : ""} aria-pressed={!hidden} onClick={() => toggleSeries(item.destination_id)} title={`${hidden ? "Show" : "Hide"} ${item.name}`}><i style={{ backgroundColor: item.color }} />{item.name}</button>;
+          })}
         </div>
         <div className="chart-live-controls">
           <label className="chart-refresh-control">
