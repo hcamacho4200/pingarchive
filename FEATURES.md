@@ -1,3 +1,8 @@
+[0.0.3]
+- gui: make legend clickable to remove plot lines
+- add support for avg, pack loss and availabilty in destination health
+- add all timeouts in recent events removing replies
+- add selector for destination
 
 [0.0.2] initial python-backend
 - create FastAPI Python

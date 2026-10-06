@@ -13,6 +13,7 @@ type DestinationHealth = {
   address: string;
   average_latency_ms: number | null;
   availability_pct: number;
+  packet_loss_pct: number;
   last_seen: string;
   latest_outcome: string;
   status: "Healthy" | "Degraded";
@@ -67,6 +68,7 @@ export default function Home() {
   const [overview, setOverview] = useState<OverviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [timeoutDestinationFilter, setTimeoutDestinationFilter] = useState<string[] | null>(null);
   const requestIdRef = useRef(0);
 
   const loadOverview = useCallback(async (selectedRange: TimeRange) => {
@@ -123,7 +125,25 @@ export default function Home() {
 
   const destinations = overview?.destinations ?? [];
   const events = overview?.recent_events ?? [];
+  const timeoutDestinationOptions = useMemo(
+    () => Array.from(new Set(destinations.map((destination) => destination.name))).sort((left, right) => left.localeCompare(right)),
+    [destinations],
+  );
+  const filteredEvents = useMemo(
+    () => timeoutDestinationFilter === null
+      ? events
+      : events.filter((event) => timeoutDestinationFilter.includes(event.destination_name)),
+    [events, timeoutDestinationFilter],
+  );
   const allHealthy = destinations.length > 0 && destinations.every((destination) => destination.status === "Healthy");
+
+  function toggleTimeoutDestination(destinationName: string) {
+    setTimeoutDestinationFilter((selected) => {
+      if (selected === null) return [destinationName];
+      if (selected.includes(destinationName)) return selected.filter((name) => name !== destinationName);
+      return [...selected, destinationName];
+    });
+  }
 
   function selectRange(hours: TimeRange) {
     setOverview(null);
@@ -177,16 +197,16 @@ export default function Home() {
           <article className="panel health-panel" id="destinations">
             <div className="panel-heading"><div><h2>Destination health</h2><p>QuestDB measurements · {RANGE_LABELS[range]}</p></div><a href="/settings">Manage</a></div>
             {destinations.length ? <div className="destination-list">{destinations.map((destination) => (
-              <div className="destination" key={destination.destination_id}><div className={`destination-mark ${destination.status === "Healthy" ? "healthy" : "degraded"}`}><SignalIcon /></div><div className="destination-name"><strong>{destination.name}</strong><span>{destination.address} · {formatLastSeen(destination.last_seen)}</span></div><div className="destination-stat"><strong>{formatNumber(destination.average_latency_ms)} ms</strong><span>{destination.availability_pct.toFixed(2)}%</span></div><span className={`status-badge ${destination.status.toLowerCase()}`}>{destination.status}</span></div>
+              <div className="destination" key={destination.destination_id}><div className={`destination-mark ${destination.status === "Healthy" ? "healthy" : "degraded"}`}><SignalIcon /></div><div className="destination-name"><strong>{destination.name}</strong><span>{destination.address} · {formatLastSeen(destination.last_seen)}</span></div><span className={`status-badge ${destination.status.toLowerCase()}`}>{destination.status}</span><div className="destination-metrics"><div><span>AVG LATENCY</span><strong>{formatNumber(destination.average_latency_ms)} ms</strong></div><div><span>PACKET LOSS</span><strong>{destination.packet_loss_pct.toFixed(2)}%</strong></div><div><span>AVAILABILITY</span><strong>{destination.availability_pct.toFixed(2)}%</strong></div></div></div>
             ))}</div> : <div className="empty-state"><strong>{loading ? "Loading health data…" : "No destination data"}</strong><span>Measurements will appear after the ping engine writes to QuestDB.</span></div>}
           </article>
         </section>
 
         <section className="panel events-panel" id="events">
-          <div className="panel-heading"><div><h2>Recent ping events</h2><p>Latest measurements stored in QuestDB</p></div><button className="secondary-button" onClick={() => void loadOverview(range)}>Refresh</button></div>
-          {events.length ? <div className="table-wrap"><table><thead><tr><th>TIME</th><th>DESTINATION</th><th>ADDRESS</th><th>LATENCY</th><th>RESULT</th></tr></thead><tbody>{events.map((event) => (
+          <div className="panel-heading"><div><h2>Recent timeout events{events.length ? ` (${filteredEvents.length}${timeoutDestinationFilter === null ? "" : ` of ${events.length}`})` : ""}</h2><p>All unanswered pings in the selected {RANGE_LABELS[range]} range</p></div><div className="timeout-panel-actions"><details className="destination-filter"><summary>{timeoutDestinationFilter === null ? "All destinations" : timeoutDestinationFilter.length === 0 ? "No destinations" : timeoutDestinationFilter.length === 1 ? timeoutDestinationFilter[0] : `${timeoutDestinationFilter.length} destinations`}<span aria-hidden="true">⌄</span></summary><div className="destination-filter-menu"><button className={timeoutDestinationFilter === null ? "selected" : ""} type="button" onClick={() => setTimeoutDestinationFilter(null)}><i aria-hidden="true" />All destinations</button>{timeoutDestinationOptions.map((destinationName) => <button className={timeoutDestinationFilter?.includes(destinationName) ? "selected" : ""} type="button" key={destinationName} onClick={() => toggleTimeoutDestination(destinationName)}><i aria-hidden="true" />{destinationName}</button>)}</div></details><button className="secondary-button" onClick={() => void loadOverview(range)}>Refresh</button></div></div>
+          {filteredEvents.length ? <div className="table-wrap timeout-table-wrap"><table><thead><tr><th>TIME</th><th>DESTINATION</th><th>ADDRESS</th><th>LATENCY</th><th>RESULT</th></tr></thead><tbody>{filteredEvents.map((event) => (
             <tr key={`${event.timestamp}-${event.destination_name}`}><td className="mono">{formatTime(event.timestamp)}</td><td><strong>{event.destination_name}</strong></td><td className="mono muted">{event.address}</td><td className="mono">{event.latency_ms === null ? "—" : `${event.latency_ms.toFixed(2)} ms`}</td><td><span className={`event-result ${event.outcome === "reply" ? "reply" : "timeout"}`}><i />{event.outcome.replace("_", " ")}</span></td></tr>
-          ))}</tbody></table></div> : <div className="empty-state compact-empty">No recent ping events.</div>}
+          ))}</tbody></table></div> : <div className="empty-state compact-empty">{events.length ? "No timeout events match the selected destinations." : "No timeout events recorded."}</div>}
         </section>
       </section>
     </main>
