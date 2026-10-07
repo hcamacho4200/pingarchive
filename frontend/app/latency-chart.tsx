@@ -24,7 +24,7 @@ export type LatencyChartSeries = {
 type LatencyChartProps = {
   series: LatencyChartSeries[];
   rangeLabel: string;
-  rangeHours: number;
+  rangeMinutes: number;
   refreshSeconds: number;
   onRefreshSecondsChange: (seconds: number) => void;
   onReset: () => void;
@@ -33,10 +33,11 @@ type LatencyChartProps = {
 type StoredSeries = Omit<LatencyChartSeries, "points"> & { points: Map<number, number | null> };
 const LIVE_RIGHT_BUFFER_PX = 64;
 const GAP_THRESHOLDS: Record<number, number> = {
-  1: 12,
-  24: 90 * 60,
-  168: 9 * 60 * 60,
-  720: 36 * 60 * 60,
+  5: 12,
+  60: 12,
+  1440: 90 * 60,
+  10080: 9 * 60 * 60,
+  43200: 36 * 60 * 60,
 };
 
 function chartColors() {
@@ -58,7 +59,7 @@ function applyTheme(chart: IChartApi) {
   });
 }
 
-export function LatencyChart({ series, rangeLabel, rangeHours, refreshSeconds, onRefreshSecondsChange, onReset }: LatencyChartProps) {
+export function LatencyChart({ series, rangeLabel, rangeMinutes, refreshSeconds, onRefreshSecondsChange, onReset }: LatencyChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const lineRefs = useRef(new Map<number, ISeriesApi<"Line">[]>());
@@ -120,7 +121,7 @@ export function LatencyChart({ series, rangeLabel, rangeHours, refreshSeconds, o
       let segment: LineData<UTCTimestamp>[] = [];
       let previousTimestamp: number | null = null;
       for (const [time, value] of sortedPoints) {
-        const timestampGap = previousTimestamp !== null && time - previousTimestamp > GAP_THRESHOLDS[rangeHours];
+        const timestampGap = previousTimestamp !== null && time - previousTimestamp > GAP_THRESHOLDS[rangeMinutes];
         if (value === null) {
           if (segment.length > 0) segments.push(segment);
           segment = [];
@@ -152,7 +153,7 @@ export function LatencyChart({ series, rangeLabel, rangeHours, refreshSeconds, o
       });
       lineRefs.current.set(item.destination_id, lines);
     }
-  }, [rangeHours]);
+  }, [rangeMinutes]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -210,11 +211,15 @@ export function LatencyChart({ series, rangeLabel, rangeHours, refreshSeconds, o
     mergeAndRender(series);
 
     if (!initializedRef.current) {
-      const latestTimestamp = Math.max(
-        ...series.flatMap((item) => item.points.map((point) => Math.floor(new Date(point.timestamp).getTime() / 1000))),
-      );
+      let latestTimestamp = Number.NEGATIVE_INFINITY;
+      for (const item of series) {
+        for (const point of item.points) {
+          latestTimestamp = Math.max(latestTimestamp, Math.floor(new Date(point.timestamp).getTime() / 1000));
+        }
+      }
+      if (!Number.isFinite(latestTimestamp)) return;
       chart.timeScale().setVisibleRange({
-        from: (latestTimestamp - (rangeHours * 60 * 60)) as UTCTimestamp,
+        from: (latestTimestamp - (rangeMinutes * 60)) as UTCTimestamp,
         to: latestTimestamp as UTCTimestamp,
       });
       chart.timeScale().applyOptions({ rightOffsetPixels: LIVE_RIGHT_BUFFER_PX });
@@ -224,9 +229,12 @@ export function LatencyChart({ series, rangeLabel, rangeHours, refreshSeconds, o
       chart.timeScale().applyOptions({ rightOffsetPixels: LIVE_RIGHT_BUFFER_PX });
       chart.timeScale().scrollToRealTime();
     } else if (visibleRange) {
-      chart.timeScale().setVisibleRange(visibleRange);
+      const frame = window.requestAnimationFrame(() => {
+        if (chartRef.current === chart) chart.timeScale().setVisibleRange(visibleRange);
+      });
+      return () => window.cancelAnimationFrame(frame);
     }
-  }, [mergeAndRender, rangeHours, series]);
+  }, [mergeAndRender, rangeMinutes, series]);
 
   return (
     <div className="latency-chart-shell">

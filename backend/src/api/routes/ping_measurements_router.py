@@ -22,6 +22,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ping_measurements", tags=["ping_measurements"])
 
 SAMPLE_INTERVALS = {1: "5s", 24: "1h", 168: "6h", 720: "1d"}
+ALLOWED_SAMPLE_INTERVALS = {
+    1: {"1s", "5s", "1m"},
+    24: {"5s", "1m", "1h"},
+    168: {"1m", "1h", "6h"},
+    720: {"1h", "6h", "1d"},
+}
+OVERVIEW_SAMPLE_INTERVALS = {5: "5s", 60: "5s", 1440: "1h", 10080: "6h", 43200: "1d"}
+
+
+def _sample_interval(hours: int, bucket: str | None) -> str:
+    if bucket is not None and bucket not in ALLOWED_SAMPLE_INTERVALS[hours]:
+        allowed = ", ".join(sorted(ALLOWED_SAMPLE_INTERVALS[hours]))
+        raise HTTPException(status_code=400, detail=f"bucket for {hours} hours must be one of {allowed}")
+    return bucket or SAMPLE_INTERVALS[hours]
 
 
 def _group_latency_rows(rows: list[dict]) -> list[LatencySeriesSchema]:
@@ -62,9 +76,7 @@ def latency_history(before: datetime, hours: int = Query(default=1), bucket: str
     end_time = before if before.tzinfo else before.replace(tzinfo=UTC)
     end_time = end_time.astimezone(UTC)
     start_time = end_time - timedelta(hours=hours)
-    if bucket is not None and bucket not in {"5s", "1m", "1h", "6h", "1d"}:
-        raise HTTPException(status_code=400, detail="bucket must be one of 5s, 1m, 1h, 6h, or 1d")
-    interval = bucket or SAMPLE_INTERVALS[hours]
+    interval = _sample_interval(hours, bucket)
     sql = f"""
         SELECT
             sent_time AS timestamp,
@@ -94,13 +106,17 @@ def latency_history(before: datetime, hours: int = Query(default=1), bucket: str
 
 
 @router.get("/overview", summary="Get QuestDB data for the overview dashboard", response_model=ApiResponse[PingOverviewSchema])
-def ping_overview(hours: int = Query(default=24)):
+def ping_overview(
+    hours: int | None = Query(default=None),
+    minutes: int | None = Query(default=None),
+):
     """Return latency history and destination health for a supported time range."""
-    if hours not in SAMPLE_INTERVALS:
-        raise HTTPException(status_code=400, detail="hours must be one of 1, 24, 168, or 720")
+    selected_minutes = minutes if minutes is not None else (hours if hours is not None else 24) * 60
+    if selected_minutes not in OVERVIEW_SAMPLE_INTERVALS:
+        raise HTTPException(status_code=400, detail="minutes must be one of 5, 60, 1440, 10080, or 43200")
 
-    interval = SAMPLE_INTERVALS[hours]
-    latency_lookback_hours = 24 if hours == 1 else hours
+    interval = OVERVIEW_SAMPLE_INTERVALS[selected_minutes]
+    latency_lookback_minutes = 1440 if selected_minutes in {5, 60} else selected_minutes
     client = QuestDBClient(get_settings().questdb_address)
     latency_sql = f"""
         SELECT
@@ -109,11 +125,11 @@ def ping_overview(hours: int = Query(default=24)):
             destination_name,
             avg(rtt_us) / 1000.0 AS average_latency_ms
         FROM ping_measurements
-        WHERE sent_time >= dateadd('h', -{latency_lookback_hours}, now())
-          {"AND sent_time < dateadd('m', -5, now())" if hours == 1 else ""}
+        WHERE sent_time >= dateadd('m', -{latency_lookback_minutes}, now())
+          {"AND sent_time < dateadd('m', -5, now())" if selected_minutes in {5, 60} else ""}
         SAMPLE BY {interval} ALIGN TO CALENDAR
     """
-    live_latency_sql = """
+    live_latency_sql = f"""
         SELECT
             sent_time AS timestamp,
             destination_id,
@@ -121,7 +137,7 @@ def ping_overview(hours: int = Query(default=24)):
             avg(rtt_us) / 1000.0 AS average_latency_ms
         FROM ping_measurements
         WHERE sent_time >= dateadd('m', -5, now())
-        SAMPLE BY 1s ALIGN TO CALENDAR
+        SAMPLE BY {interval} ALIGN TO CALENDAR
     """
     health_sql = f"""
         SELECT
@@ -133,19 +149,19 @@ def ping_overview(hours: int = Query(default=24)):
             last(sent_time) AS last_seen,
             last(outcome) AS latest_outcome
         FROM ping_measurements
-        WHERE sent_time >= dateadd('h', -{hours}, now())
+        WHERE sent_time >= dateadd('m', -{selected_minutes}, now())
     """
     recent_sql = f"""
         SELECT sent_time, destination_name, target_address, rtt_us, outcome
         FROM ping_measurements
-        WHERE outcome = 'timeout' AND sent_time >= dateadd('h', -{hours}, now())
+        WHERE outcome = 'timeout' AND sent_time >= dateadd('m', -{selected_minutes}, now())
         ORDER BY sent_time DESC
     """
 
     with request_meta_context() as meta:
         try:
             latency_rows = client.query(latency_sql)
-            if hours == 1:
+            if selected_minutes in {5, 60}:
                 latency_rows.extend(client.query(live_latency_sql))
             health_rows = client.query(health_sql)
             recent_rows = client.query(recent_sql)
@@ -190,7 +206,8 @@ def ping_overview(hours: int = Query(default=24)):
             for row in recent_rows
         ]
         data = PingOverviewSchema(
-            range_hours=hours,
+            range_hours=selected_minutes / 60,
+            range_minutes=selected_minutes,
             average_latency_ms=average_latency,
             availability_pct=availability,
             packet_loss_pct=100 - availability if availability is not None else None,

@@ -55,7 +55,8 @@ class PingEventSchema(BaseModel):
 class PingOverviewSchema(BaseModel):
     """QuestDB-backed data needed by the overview page."""
 
-    range_hours: int
+    range_hours: float
+    range_minutes: int
     average_latency_ms: float | None
     availability_pct: float | None
     packet_loss_pct: float | None

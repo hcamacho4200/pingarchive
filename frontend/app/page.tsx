@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LatencyChart } from "./latency-chart";
 import { ThemeToggle } from "./theme-toggle";
 
-type TimeRange = 1 | 24 | 168 | 720;
+type TimeRange = 5 | 60 | 1440 | 10080 | 43200;
 type LatencyPoint = { timestamp: string; average_latency_ms: number | null };
 type LatencySeries = { destination_id: number; name: string; points: LatencyPoint[] };
 type DestinationHealth = {
@@ -27,6 +27,7 @@ type PingEvent = {
 };
 type OverviewData = {
   range_hours: number;
+  range_minutes: number;
   average_latency_ms: number | null;
   availability_pct: number | null;
   packet_loss_pct: number | null;
@@ -37,7 +38,7 @@ type OverviewData = {
 type ApiResponse<T> = { data: T };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8002/api/v1";
-const RANGE_LABELS: Record<TimeRange, string> = { 1: "1H", 24: "24H", 168: "7D", 720: "30D" };
+const RANGE_LABELS: Record<TimeRange, string> = { 5: "5M", 60: "1H", 1440: "24H", 10080: "7D", 43200: "30D" };
 const SERIES_COLORS = ["#0d9488", "#4f7cff", "#e08b37", "#b45ac4", "#d64f6b", "#22a6c7", "#84a344", "#8b6fd9"];
 const CHART_SETTINGS_KEY = "pingarchive.chart-settings";
 
@@ -61,7 +62,7 @@ function formatLastSeen(value: string) {
 }
 
 export default function Home() {
-  const [range, setRange] = useState<TimeRange>(1);
+  const [range, setRange] = useState<TimeRange>(60);
   const [chartResetKey, setChartResetKey] = useState(0);
   const [refreshSeconds, setRefreshSeconds] = useState(5);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -76,7 +77,7 @@ export default function Home() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/ping_measurements/overview?hours=${selectedRange}`, { cache: "no-store" });
+      const response = await fetch(`${API_BASE_URL}/ping_measurements/overview?minutes=${selectedRange}`, { cache: "no-store" });
       const payload = await response.json() as ApiResponse<OverviewData> | { detail?: string };
       if (!response.ok) throw new Error("detail" in payload && payload.detail ? payload.detail : `Request failed (${response.status})`);
       if (requestId === requestIdRef.current) setOverview((payload as ApiResponse<OverviewData>).data);
@@ -94,7 +95,9 @@ export default function Home() {
       const saved = window.localStorage.getItem(CHART_SETTINGS_KEY);
       if (saved) {
         const parsed = JSON.parse(saved) as { range?: number; refreshSeconds?: number };
-        if ([1, 24, 168, 720].includes(parsed.range ?? 0)) setRange(parsed.range as TimeRange);
+        const legacyRangeMinutes = parsed.range && [1, 24, 168, 720].includes(parsed.range) ? parsed.range * 60 : parsed.range;
+        const savedRange = [5, 60, 1440, 10080, 43200].includes(legacyRangeMinutes ?? 0) ? legacyRangeMinutes as TimeRange : 60;
+        setRange(savedRange);
         if ([1, 5, 20, 60].includes(parsed.refreshSeconds ?? 0)) setRefreshSeconds(parsed.refreshSeconds as number);
       }
     } catch {
@@ -159,7 +162,7 @@ export default function Home() {
   function resetChart() {
     window.localStorage.removeItem(CHART_SETTINGS_KEY);
     setOverview(null);
-    setRange(1);
+    setRange(60);
     setRefreshSeconds(5);
     setChartResetKey((value) => value + 1);
   }
@@ -196,7 +199,7 @@ export default function Home() {
           <article className="panel chart-panel">
             <div className="panel-heading"><div><h2>Latency history</h2><p>Average reply time from QuestDB</p></div><div className="range-control" aria-label="Time range">{(Object.keys(RANGE_LABELS).map(Number) as TimeRange[]).map((hours) => <button key={hours} className={range === hours ? "selected" : ""} onClick={() => selectRange(hours)}>{RANGE_LABELS[hours]}</button>)}</div></div>
             <div className="chart-summary"><strong>{formatNumber(overview?.average_latency_ms ?? null)} ms</strong><span>Average across {chart.series.length} destination{chart.series.length === 1 ? "" : "s"}</span></div>
-            {chart.series.length ? <LatencyChart key={`${range}-${chartResetKey}`} series={chart.series} rangeLabel={RANGE_LABELS[range]} rangeHours={range} refreshSeconds={refreshSeconds} onRefreshSecondsChange={setRefreshSeconds} onReset={resetChart} /> : <div className="chart-empty">{loading || !settingsLoaded ? "Loading latency measurements…" : "No latency measurements in this time range."}</div>}
+            {chart.series.length ? <LatencyChart key={`${range}-${chartResetKey}`} series={chart.series} rangeLabel={RANGE_LABELS[range]} rangeMinutes={range} refreshSeconds={refreshSeconds} onRefreshSecondsChange={setRefreshSeconds} onReset={resetChart} /> : <div className="chart-empty">{loading || !settingsLoaded ? "Loading latency measurements…" : "No latency measurements in this time range."}</div>}
           </article>
 
           <article className="panel health-panel" id="destinations">
