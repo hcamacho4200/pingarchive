@@ -135,11 +135,11 @@ def ping_overview(hours: int = Query(default=24)):
         FROM ping_measurements
         WHERE sent_time >= dateadd('h', -{hours}, now())
     """
-    recent_sql = """
+    recent_sql = f"""
         SELECT sent_time, destination_name, target_address, rtt_us, outcome
         FROM ping_measurements
+        WHERE outcome = 'timeout' AND sent_time >= dateadd('h', -{hours}, now())
         ORDER BY sent_time DESC
-        LIMIT 5
     """
 
     with request_meta_context() as meta:
@@ -165,6 +165,7 @@ def ping_overview(hours: int = Query(default=24)):
                     address=str(row.get("target_address") or "—"),
                     average_latency_ms=float(row["average_latency_ms"]) if row.get("average_latency_ms") is not None else None,
                     availability_pct=availability,
+                    packet_loss_pct=max(0, 100 - availability),
                     last_seen=row["last_seen"],
                     latest_outcome=latest_outcome,
                     status="Healthy" if latest_outcome == "reply" and availability >= 95 else "Degraded",

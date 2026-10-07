@@ -36,6 +36,7 @@ class DestinationHealthSchema(BaseModel):
     address: str
     average_latency_ms: float | None
     availability_pct: float
+    packet_loss_pct: float
     last_seen: datetime
     latest_outcome: str
     status: str

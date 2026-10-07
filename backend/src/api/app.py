@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes.ping_destinations_router import router as ping_destinations_router
+from api.routes.ping_engine_router import router as ping_engine_router
 from api.routes.ping_measurements_router import router as ping_measurements_router
 from environment import get_settings
 from logging_setup import reset_logging, setup_logging
@@ -33,6 +34,7 @@ app.add_middleware(
 )
 
 app.include_router(ping_destinations_router, prefix=API_V1_PREFIX)
+app.include_router(ping_engine_router, prefix=API_V1_PREFIX)
 app.include_router(ping_measurements_router, prefix=API_V1_PREFIX)
 
 logger.info("Environment: %s, %s", settings.environment, settings.log_level)

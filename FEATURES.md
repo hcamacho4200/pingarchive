@@ -1,3 +1,8 @@
+[0.0.3]
+- gui: make legend clickable to remove plot lines
+- add support for avg, pack loss and availabilty in destination health
+- add all timeouts in recent events removing replies
+- add selector for destination
 
 [0.0.2] initial python-backend
 - create FastAPI Python
@@ -23,6 +28,7 @@
 - fixed timeout ui, now provides blank space
 - enable chart save after navigation
 - enable button for chart reset
+- enable ping-engine restart
 
 [0.0.1] initial testing of ping-engine in golang
 - ping-engine in go

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"golang.org/x/net/icmp"
@@ -76,12 +77,6 @@ func main() {
 	mainctx, cancelMain := context.WithCancel(context.Background())
 	manager := NewWorkerManager()
 	pingStats := NewPingStats()
-	controlServer := NewControlServer(cancelMain, manager, pingStats, settings.pingControlServerListenAddress)
-	go func() {
-		if err := controlServer.Start(); err != nil {
-			log.Fatal(err)
-		}
-	}()
 
 	replies := make(chan PingData, channelSize)
 	receiveErrors := make(chan PingData, channelSize)
@@ -95,38 +90,43 @@ func main() {
 	go reaperScan(ctx, packetTracker, pingStats, receiveTimeout)
 	go processPings(ctx, packetTracker, pingStats, replies, receiveErrors, receiveTimeout, measurementWriter)
 
-	for index, pingDestination := range destinations {
-		if pingDestination.Enabled == false {
-			fmt.Printf("Skipping disabled destination %s\n", pingDestination.Name)
-			continue
-		}
+	startConfiguredPingers(destinations, workerBaseID, manager, conn, packetTracker, pingStats, receiveErrors)
 
-		switch pingDestination.AddressType {
-		case "IPV4":
-			ip, err := resolveIPv4(pingDestination.IPv4)
-			if err != nil {
-				log.Fatalf("Unable to resolve %s: %v", pingDestination.IPv4, err)
+	var restartMu sync.Mutex
+	restart := func() error {
+		restartMu.Lock()
+		defer restartMu.Unlock()
+		refreshedDestinations, err := backendClient.GetPingDestinations()
+		if err != nil {
+			return err
+		}
+		if err := manager.StopAll(); err != nil {
+			return err
+		}
+		workerIDs := make([]int, 0, manager.Count())
+		manager.Range(func(id int, _ *Worker) bool {
+			workerIDs = append(workerIDs, id)
+			return true
+		})
+		for _, workerID := range workerIDs {
+			if err := manager.Wait(workerID); err != nil {
+				return err
 			}
-			startIPV4Pinger(ip, pingDestination, workerBaseID, index, manager, conn, packetTracker, pingStats, receiveErrors)
-		case "IPV6":
-		case "HOST":
-			var ip *net.IPAddr
-			ips, err := net.LookupIP(pingDestination.Host)
-			if err != nil {
-				log.Fatalf("Unable to resolve %s: %v", pingDestination.Host, err)
-			}
-			for _, dnsIP := range ips {
-				fmt.Printf("Resolved %s to %s\n", pingDestination.Host, dnsIP)
-				ip, err = resolveIPv4(dnsIP.String())
-				if err != nil {
-					log.Printf("Unable to resolve %s: %v\n", pingDestination.Host, err)
-					continue
-				}
-				startIPV4Pinger(ip, pingDestination, workerBaseID, index, manager, conn, packetTracker, pingStats, receiveErrors)
-				continue
+			if err := manager.Remove(workerID); err != nil {
+				return err
 			}
 		}
+		workerBaseID = (workerBaseID + len(destinations) + 1) & 0xffff
+		destinations = refreshedDestinations
+		startConfiguredPingers(destinations, workerBaseID, manager, conn, packetTracker, pingStats, receiveErrors)
+		return nil
 	}
+	controlServer := NewControlServer(cancelMain, manager, pingStats, settings.pingControlServerListenAddress, restart)
+	go func() {
+		if err := controlServer.Start(); err != nil {
+			log.Fatal(err)
+		}
+	}()
 
 	for {
 		select {
@@ -142,6 +142,41 @@ func main() {
 			})
 			fmt.Printf("%+v\n", pingStats)
 			return
+		}
+	}
+}
+
+func startConfiguredPingers(destinations []PingDestination, workerBaseID int, manager *WorkerManager, conn *icmp.PacketConn, packetTracker *SafeMap[pingTrackerKey, PingData], pingStats *PingStats, receiveErrors chan PingData) {
+	for index, pingDestination := range destinations {
+		if !pingDestination.Enabled {
+			fmt.Printf("Skipping disabled destination %s\n", pingDestination.Name)
+			continue
+		}
+
+		switch pingDestination.AddressType {
+		case "IPV4":
+			ip, err := resolveIPv4(pingDestination.IPv4)
+			if err != nil {
+				log.Printf("Unable to resolve %s: %v", pingDestination.IPv4, err)
+				continue
+			}
+			startIPV4Pinger(ip, pingDestination, workerBaseID, index, manager, conn, packetTracker, pingStats, receiveErrors)
+		case "IPV6":
+		case "HOST":
+			ips, err := net.LookupIP(pingDestination.Host)
+			if err != nil {
+				log.Printf("Unable to resolve %s: %v", pingDestination.Host, err)
+				continue
+			}
+			for _, dnsIP := range ips {
+				fmt.Printf("Resolved %s to %s\n", pingDestination.Host, dnsIP)
+				ip, resolveErr := resolveIPv4(dnsIP.String())
+				if resolveErr != nil {
+					continue
+				}
+				startIPV4Pinger(ip, pingDestination, workerBaseID, index, manager, conn, packetTracker, pingStats, receiveErrors)
+				break
+			}
 		}
 	}
 }

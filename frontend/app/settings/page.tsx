@@ -30,6 +30,7 @@ type DestinationForm = {
 };
 
 type ApiResponse<T> = { data: T };
+type PingEngineStatus = { online: boolean; message: string; workers: number | null };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8002/api/v1";
 const EMPTY_FORM: DestinationForm = {
@@ -77,6 +78,9 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [engineStatus, setEngineStatus] = useState<PingEngineStatus | null>(null);
+  const [restartingEngine, setRestartingEngine] = useState(false);
+  const [engineNotice, setEngineNotice] = useState<string | null>(null);
 
   const loadDestinations = useCallback(async () => {
     setLoading(true);
@@ -90,7 +94,18 @@ export default function SettingsPage() {
     }
   }, []);
 
-  useEffect(() => { void loadDestinations(); }, [loadDestinations]);
+  const loadEngineStatus = useCallback(async () => {
+    try {
+      setEngineStatus(await apiRequest<PingEngineStatus>("/ping_engine"));
+    } catch {
+      setEngineStatus({ online: false, message: "Ping engine is unavailable", workers: null });
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadDestinations();
+    void loadEngineStatus();
+  }, [loadDestinations, loadEngineStatus]);
 
   function startEditing(destination: PingDestination) {
     setEditingId(destination.id);
@@ -165,6 +180,22 @@ export default function SettingsPage() {
     }
   }
 
+  async function restartPingEngine() {
+    setRestartingEngine(true);
+    setEngineNotice(null);
+    setError(null);
+    try {
+      const status = await apiRequest<PingEngineStatus>("/ping_engine/restart", { method: "POST" });
+      setEngineStatus(status);
+      setEngineNotice("Ping engine restarted and destination configuration reloaded.");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to restart the ping engine");
+      await loadEngineStatus();
+    } finally {
+      setRestartingEngine(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -216,6 +247,11 @@ export default function SettingsPage() {
               ))}</div>
             )}
           </article>
+        </section>
+
+        <section className="panel engine-settings-panel">
+          <div className="engine-settings-content"><div className={`engine-status-mark ${engineStatus?.online ? "online" : "offline"}`}><span aria-hidden="true">↻</span></div><div><h2>Ping Engine</h2><p>Restart the ping workers and reload the latest destination configuration.</p><div className="engine-status-line"><i className={engineStatus?.online ? "online" : "offline"} /><strong>{engineStatus === null ? "Checking engine…" : engineStatus.message}</strong>{engineStatus?.workers !== null && engineStatus?.workers !== undefined && <span>{engineStatus.workers} active {engineStatus.workers === 1 ? "worker" : "workers"}</span>}</div>{engineNotice && <span className="engine-notice">{engineNotice}</span>}</div></div>
+          <button className="secondary-button engine-restart-button" type="button" disabled={restartingEngine || engineStatus?.online === false} onClick={() => void restartPingEngine()}>{restartingEngine ? "Restarting…" : "Restart Ping Engine"}</button>
         </section>
       </section>
     </main>
