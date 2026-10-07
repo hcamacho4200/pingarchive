@@ -1,3 +1,7 @@
+
+[0.0.4]
+- bug fix on ping-engine restart (removed)
+
 [0.0.3]
 - gui: make legend clickable to remove plot lines
 - add support for avg, pack loss and availabilty in destination health

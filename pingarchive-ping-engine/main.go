@@ -6,7 +6,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"sync"
 	"time"
 
 	"golang.org/x/net/icmp"
@@ -92,36 +91,7 @@ func main() {
 
 	startConfiguredPingers(destinations, workerBaseID, manager, conn, packetTracker, pingStats, receiveErrors)
 
-	var restartMu sync.Mutex
-	restart := func() error {
-		restartMu.Lock()
-		defer restartMu.Unlock()
-		refreshedDestinations, err := backendClient.GetPingDestinations()
-		if err != nil {
-			return err
-		}
-		if err := manager.StopAll(); err != nil {
-			return err
-		}
-		workerIDs := make([]int, 0, manager.Count())
-		manager.Range(func(id int, _ *Worker) bool {
-			workerIDs = append(workerIDs, id)
-			return true
-		})
-		for _, workerID := range workerIDs {
-			if err := manager.Wait(workerID); err != nil {
-				return err
-			}
-			if err := manager.Remove(workerID); err != nil {
-				return err
-			}
-		}
-		workerBaseID = (workerBaseID + len(destinations) + 1) & 0xffff
-		destinations = refreshedDestinations
-		startConfiguredPingers(destinations, workerBaseID, manager, conn, packetTracker, pingStats, receiveErrors)
-		return nil
-	}
-	controlServer := NewControlServer(cancelMain, manager, pingStats, settings.pingControlServerListenAddress, restart)
+	controlServer := NewControlServer(cancelMain, manager, pingStats, settings.pingControlServerListenAddress)
 	go func() {
 		if err := controlServer.Start(); err != nil {
 			log.Fatal(err)
