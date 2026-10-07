@@ -13,7 +13,7 @@ func NewSettings() *Settings {
 	return &Settings{
 		apiBindHost:                    getEnv("API_BIND_HOST", "localhost"),
 		apiBindPort:                    getEnv("API_BIND_PORT", "8002"),
-		pingControlServerListenAddress: getEnv("PING_CONTROL_SERVER_LISTEN_ADDRESS", "0.0.0.0:8100"),
+		pingControlServerListenAddress: getEnv("PING_CONTROL_SERVER_LISTEN_ADDRESS", "127.0.0.1:8100"),
 		qwestDBAddress:                 getEnv("QWEST_DB_ADDRESS", "localhost:9000"),
 	}
 }

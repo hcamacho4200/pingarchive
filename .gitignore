@@ -12,3 +12,6 @@ backend/logs/ping_archive_api.log
 .gitignore
 backend/data/pingarchive.db
 backend/.env
+backend/logs/*.*
+
+backend/logs/ping_archive_api.log.1

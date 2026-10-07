@@ -123,7 +123,12 @@ export default function Home() {
     return { series: sourceSeries.map((item, seriesIndex) => ({ ...item, color: SERIES_COLORS[seriesIndex % SERIES_COLORS.length] })) };
   }, [overview]);
 
-  const destinations = overview?.destinations ?? [];
+  const destinations = useMemo(
+    () => [...(overview?.destinations ?? [])].sort(
+      (left, right) => left.availability_pct - right.availability_pct || left.name.localeCompare(right.name),
+    ),
+    [overview],
+  );
   const events = overview?.recent_events ?? [];
   const timeoutDestinationOptions = useMemo(
     () => Array.from(new Set(destinations.map((destination) => destination.name))).sort((left, right) => left.localeCompare(right)),

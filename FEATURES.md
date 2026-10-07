@@ -28,6 +28,7 @@
 - fixed timeout ui, now provides blank space
 - enable chart save after navigation
 - enable button for chart reset
+- enable ping-engine restart
 
 [0.0.1] initial testing of ping-engine in golang
 - ping-engine in go
