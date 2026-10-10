@@ -62,7 +62,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	conn, err := icmp.ListenPacket("udp4", "0.0.0.0")
+	conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
 	if err != nil {
 		log.Fatalf("Unable to open ICMP socket: %v", err)
 	}
@@ -238,7 +238,7 @@ func sendPing(
 		return err
 	}
 
-	destination := &net.UDPAddr{
+	destination := &net.IPAddr{
 		IP: target.IP,
 	}
 

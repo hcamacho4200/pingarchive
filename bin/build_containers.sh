@@ -5,7 +5,7 @@ echo "Building containers with version $APP_VERSION"
 cd pingarchive-ping-engine
 docker build \
     -t pingarchive-engine:$APP_VERSION \
-    -t pingarchive-ping-engine:testing \
+    -t pingarchive-engine:testing \
     .
 cd ..
 
@@ -19,7 +19,7 @@ cd ..
 cd frontend
 docker build \
     -t pingarchive-frontend:$APP_VERSION \
-    -t pingarchive-frontend:$testing \
+    -t pingarchive-frontend:testing \
     .
 cd ..
 
