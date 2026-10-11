@@ -11,7 +11,7 @@
 - added docker build files and compose
 - adjust docker compose to include a proxy
     - this allows one entry point
-
+- fix engine restart
 
 [0.0.3]
 - gui: make legend clickable to remove plot lines
