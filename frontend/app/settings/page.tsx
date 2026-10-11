@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { ThemeToggle } from "../theme-toggle";
+import { API_BASE_URL } from "../api-config";
 
 type AddressType = "HOST" | "IPV4" | "IPV6";
 type LocationZone = "LAN" | "VPN" | "GATEWAY" | "PROVIDER_DNS" | "INTERNET";
@@ -32,7 +33,6 @@ type DestinationForm = {
 type ApiResponse<T> = { data: T };
 type PingEngineStatus = { online: boolean; message: string; workers: number | null };
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8002/api/v1";
 const EMPTY_FORM: DestinationForm = {
   name: "",
   address: "",

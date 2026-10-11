@@ -9,6 +9,8 @@
 - bug fix on ping-engine restart (removed)
 - removed sample size feature, bogging system down
 - added docker build files and compose
+- adjust docker compose to include a proxy
+    - this allows one entry point
 
 
 [0.0.3]

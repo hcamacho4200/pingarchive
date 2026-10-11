@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"runtime"
 	"time"
 
 	"golang.org/x/net/icmp"
@@ -61,8 +62,18 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	network := "ip4:icmp"
+	listenAddress := "0.0.0.0"
 
-	conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
+	if runtime.GOOS == "darwin" {
+		network = "udp4"
+		listenAddress = "0.0.0.0"
+	}
+
+	if runtime.GOOS == "darwin" {
+		// Running on macOS
+	}
+	conn, err := icmp.ListenPacket(network, listenAddress)
 	if err != nil {
 		log.Fatalf("Unable to open ICMP socket: %v", err)
 	}
@@ -238,8 +249,12 @@ func sendPing(
 		return err
 	}
 
-	destination := &net.IPAddr{
-		IP: target.IP,
+	var destination net.Addr
+
+	if runtime.GOOS == "darwin" {
+		destination = &net.UDPAddr{IP: target.IP}
+	} else {
+		destination = &net.IPAddr{IP: target.IP}
 	}
 
 	if _, err := conn.WriteTo(data, destination); err != nil {
