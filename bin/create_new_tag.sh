@@ -12,5 +12,6 @@ if [[ -z "$TAG_MESSAGE" ]]; then
 fi
 
 git tag $new_tag -m "$TAG_MESSAGE"
-git push prod $new_tag 
+git push prod $new_tag
+git push origin $new_tag
 echo "New tag $new_tag created"
