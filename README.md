@@ -27,6 +27,17 @@ development or as a Docker Compose stack.
   stopping the Ping Engine process.
 - Use light or dark mode.
 
+## Quick Start
+- Clone the repository to your desired location
+- cd docker-compose
+- mkdir backend-data
+- mkdir questdb
+- edit docker-compose.yml
+- find the proxy service.
+- edit 3001:3000 -> Change the 3001 to your desired port.
+- docker compose up -d
+- browse http://yourdockerhost:3001
+
 ## Architecture
 
 ```text
