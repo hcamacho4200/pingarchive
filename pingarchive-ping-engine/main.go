@@ -6,6 +6,8 @@ import (
 	"log"
 	"net"
 	"os"
+	"runtime"
+	"sync"
 	"time"
 
 	"golang.org/x/net/icmp"
@@ -45,7 +47,7 @@ func main() {
 
 	err := godotenv.Load()
 	if err != nil {
-		log.Fatal("Error loading .env file")
+		log.Printf("No .env file found, using environment variables")
 	}
 
 	settings := NewSettings()
@@ -61,8 +63,18 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	network := "ip4:icmp"
+	listenAddress := "0.0.0.0"
 
-	conn, err := icmp.ListenPacket("udp4", "0.0.0.0")
+	if runtime.GOOS == "darwin" {
+		network = "udp4"
+		listenAddress = "0.0.0.0"
+	}
+
+	if runtime.GOOS == "darwin" {
+		// Running on macOS
+	}
+	conn, err := icmp.ListenPacket(network, listenAddress)
 	if err != nil {
 		log.Fatalf("Unable to open ICMP socket: %v", err)
 	}
@@ -91,7 +103,35 @@ func main() {
 
 	startConfiguredPingers(destinations, workerBaseID, manager, conn, packetTracker, pingStats, receiveErrors)
 
-	controlServer := NewControlServer(cancelMain, manager, pingStats, settings.pingControlServerListenAddress)
+	var restartMu sync.Mutex
+	restartWorkers := func() (int, error) {
+		restartMu.Lock()
+		defer restartMu.Unlock()
+
+		updatedDestinations, err := backendClient.GetPingDestinations()
+		if err != nil {
+			return manager.RunningCount(), fmt.Errorf("reload ping destinations: %w", err)
+		}
+
+		workerIDs := make([]int, 0, manager.Count())
+		manager.Range(func(id int, _ *Worker) bool {
+			workerIDs = append(workerIDs, id)
+			return true
+		})
+		if err := manager.StopAll(); err != nil {
+			return manager.RunningCount(), fmt.Errorf("stop ping workers: %w", err)
+		}
+		for _, workerID := range workerIDs {
+			if err := manager.Wait(workerID); err != nil {
+				return manager.RunningCount(), fmt.Errorf("wait for ping worker %d: %w", workerID, err)
+			}
+		}
+
+		startConfiguredPingers(updatedDestinations, workerBaseID, manager, conn, packetTracker, pingStats, receiveErrors)
+		return manager.RunningCount(), nil
+	}
+
+	controlServer := NewControlServer(cancelMain, manager, pingStats, settings.pingControlServerListenAddress, restartWorkers)
 	go func() {
 		if err := controlServer.Start(); err != nil {
 			log.Fatal(err)
@@ -238,8 +278,12 @@ func sendPing(
 		return err
 	}
 
-	destination := &net.UDPAddr{
-		IP: target.IP,
+	var destination net.Addr
+
+	if runtime.GOOS == "darwin" {
+		destination = &net.UDPAddr{IP: target.IP}
+	} else {
+		destination = &net.IPAddr{IP: target.IP}
 	}
 
 	if _, err := conn.WriteTo(data, destination); err != nil {

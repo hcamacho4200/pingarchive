@@ -1,6 +1,17 @@
+[Planned Features]
+- deploy via docker compose
+- measure ping latency
+- setup zones for acceptable latency and packet loss
+- perform ocassional trace routes and store the path
+- perform ocassional bandwidth tests and store the results
 
 [0.0.4]
 - bug fix on ping-engine restart (removed)
+- removed sample size feature, bogging system down
+- added docker build files and compose
+- adjust docker compose to include a proxy
+    - this allows one entry point
+- fix engine restart
 
 [0.0.3]
 - gui: make legend clickable to remove plot lines

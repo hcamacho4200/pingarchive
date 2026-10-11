@@ -5,6 +5,7 @@ Summary: PingArchive backend
 Requires-Python: ==3.14.5
 Description-Content-Type: text/markdown
 Requires-Dist: alembic==1.18.4
+Requires-Dist: apscheduler>=3.11.3
 Requires-Dist: cryptography==49.0.0
 Requires-Dist: fastapi==0.138.0
 Requires-Dist: httpx==0.28.1

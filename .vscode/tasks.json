@@ -1,0 +1,25 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Wait for Backend API",
+            "type": "shell",
+            "command": "for attempt in {1..60}; do if curl --silent --fail --max-time 1 http://127.0.0.1:8002/api/v1/ping_destinations >/dev/null; then echo 'Backend API is ready'; exit 0; fi; sleep 1; done; echo 'Backend API did not become ready within 60 seconds' >&2; exit 1",
+            "options": {
+                "shell": {
+                    "executable": "/bin/zsh",
+                    "args": [
+                        "-l",
+                        "-c"
+                    ]
+                }
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated",
+                "clear": true
+            }
+        }
+    ]
+}

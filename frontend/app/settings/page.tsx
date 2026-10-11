@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { ThemeToggle } from "../theme-toggle";
+import { API_BASE_URL } from "../api-config";
 
 type AddressType = "HOST" | "IPV4" | "IPV6";
 type LocationZone = "LAN" | "VPN" | "GATEWAY" | "PROVIDER_DNS" | "INTERNET";
@@ -32,7 +33,6 @@ type DestinationForm = {
 type ApiResponse<T> = { data: T };
 type PingEngineStatus = { online: boolean; message: string; workers: number | null };
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8002/api/v1";
 const EMPTY_FORM: DestinationForm = {
   name: "",
   address: "",
@@ -105,6 +105,12 @@ export default function SettingsPage() {
   useEffect(() => {
     void loadDestinations();
     void loadEngineStatus();
+
+	const engineStatusTimer = window.setInterval(() => {
+	  void loadEngineStatus();
+	}, 5_000);
+
+	return () => window.clearInterval(engineStatusTimer);
   }, [loadDestinations, loadEngineStatus]);
 
   function startEditing(destination: PingDestination) {
@@ -251,7 +257,7 @@ export default function SettingsPage() {
 
         <section className="panel engine-settings-panel">
           <div className="engine-settings-content"><div className={`engine-status-mark ${engineStatus?.online ? "online" : "offline"}`}><span aria-hidden="true">↻</span></div><div><h2>Ping Engine</h2><p>Restart the ping workers and reload the latest destination configuration.</p><div className="engine-status-line"><i className={engineStatus?.online ? "online" : "offline"} /><strong>{engineStatus === null ? "Checking engine…" : engineStatus.message}</strong>{engineStatus?.workers !== null && engineStatus?.workers !== undefined && <span>{engineStatus.workers} active {engineStatus.workers === 1 ? "worker" : "workers"}</span>}</div>{engineNotice && <span className="engine-notice">{engineNotice}</span>}</div></div>
-          <button className="secondary-button engine-restart-button" type="button" disabled={restartingEngine || engineStatus?.online === false} onClick={() => void restartPingEngine()}>{restartingEngine ? "Restarting…" : "Restart Ping Engine"}</button>
+          <button className="secondary-button engine-restart-button" type="button" disabled={restartingEngine} onClick={() => void restartPingEngine()}>{restartingEngine ? "Restarting…" : "Restart Ping Engine"}</button>
         </section>
       </section>
     </main>

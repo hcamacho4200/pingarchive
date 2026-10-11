@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LatencyChart } from "./latency-chart";
 import { ThemeToggle } from "./theme-toggle";
+import { API_BASE_URL } from "./api-config";
 
 type TimeRange = 5 | 60 | 1440 | 10080 | 43200;
 type LatencyPoint = { timestamp: string; average_latency_ms: number | null };
@@ -37,10 +38,14 @@ type OverviewData = {
 };
 type ApiResponse<T> = { data: T };
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8002/api/v1";
 const RANGE_LABELS: Record<TimeRange, string> = { 5: "5M", 60: "1H", 1440: "24H", 10080: "7D", 43200: "30D" };
 const SERIES_COLORS = ["#0d9488", "#4f7cff", "#e08b37", "#b45ac4", "#d64f6b", "#22a6c7", "#84a344", "#8b6fd9"];
 const CHART_SETTINGS_KEY = "pingarchive.chart-settings";
+
+function colorForDestination(destinationId: number) {
+  const paletteIndex = Math.abs(destinationId) % SERIES_COLORS.length;
+  return SERIES_COLORS[paletteIndex];
+}
 
 function SignalIcon() {
   return <span className="signal-icon" aria-hidden="true"><i /><i /><i /></span>;
@@ -123,7 +128,7 @@ export default function Home() {
 
   const chart = useMemo(() => {
     const sourceSeries = overview?.latency_series ?? [];
-    return { series: sourceSeries.map((item, seriesIndex) => ({ ...item, color: SERIES_COLORS[seriesIndex % SERIES_COLORS.length] })) };
+    return { series: sourceSeries.map((item) => ({ ...item, color: colorForDestination(item.destination_id) })) };
   }, [overview]);
 
   const destinations = useMemo(

@@ -9,18 +9,20 @@ import (
 )
 
 type ControlServer struct {
-	manager       *WorkerManager
-	pingStats     *PingStats
-	listenAddress string
-	cancelMain    context.CancelFunc
+	manager        *WorkerManager
+	pingStats      *PingStats
+	listenAddress  string
+	cancelMain     context.CancelFunc
+	restartWorkers func() (int, error)
 }
 
-func NewControlServer(cancelMain context.CancelFunc, manager *WorkerManager, pingStats *PingStats, listenAddress string) *ControlServer {
+func NewControlServer(cancelMain context.CancelFunc, manager *WorkerManager, pingStats *PingStats, listenAddress string, restartWorkers func() (int, error)) *ControlServer {
 	return &ControlServer{
-		manager:       manager,
-		listenAddress: listenAddress,
-		pingStats:     pingStats,
-		cancelMain:    cancelMain,
+		manager:        manager,
+		listenAddress:  listenAddress,
+		pingStats:      pingStats,
+		cancelMain:     cancelMain,
+		restartWorkers: restartWorkers,
 	}
 }
 
@@ -35,6 +37,7 @@ func (s *ControlServer) Start() error {
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("GET /ping_stats", s.handleStats)
 	mux.HandleFunc("GET /workers", s.workers)
+	mux.HandleFunc("POST /restart", s.restart)
 	mux.HandleFunc("GET /cancel_main", s.handleCancelMain)
 
 	// mux.HandleFunc("POST /workers/{id}/stop", s.stopWorker)
@@ -46,6 +49,34 @@ func (s *ControlServer) Start() error {
 	}
 	log.Printf("PingArchive control API listening on %s", s.listenAddress)
 	return server.ListenAndServe()
+}
+
+func (s *ControlServer) restart(w http.ResponseWriter, r *http.Request) {
+	if s.restartWorkers == nil {
+		writeJSON(w, http.StatusNotImplemented, APIResponse{
+			Success: false,
+			Message: "Worker restart is not configured",
+		})
+		return
+	}
+
+	workers, err := s.restartWorkers()
+	if err != nil {
+		log.Printf("unable to restart ping workers: %v", err)
+		writeJSON(w, http.StatusBadGateway, APIResponse{
+			Success: false,
+			Message: err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, APIResponse{
+		Success: true,
+		Message: "Ping workers restarted",
+		Data: map[string]int{
+			"workers": workers,
+		},
+	})
 }
 
 func (s *ControlServer) health(w http.ResponseWriter, r *http.Request) {

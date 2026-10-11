@@ -2,8 +2,25 @@
 export APP_VERSION=$(git tag | sort -V | tail -1)
 echo "Building containers with version $APP_VERSION"
 
-docker compose down
-docker system prune -f --all
-docker compose build --no-cache
-docker compose up -d
+cd pingarchive-ping-engine
+docker build \
+    -t pingarchive-engine:$APP_VERSION \
+    -t pingarchive-engine:testing \
+    .
+cd ..
 
+cd backend
+docker build \
+    -t pingarchive-backend:$APP_VERSION \
+    -t pingarchive-backend:testing \
+    .
+cd ..
+
+cd frontend
+docker build \
+    -t pingarchive-frontend:$APP_VERSION \
+    -t pingarchive-frontend:testing \
+    .
+cd ..
+
+echo "Containers built with version $APP_VERSION and tagged for testing"
